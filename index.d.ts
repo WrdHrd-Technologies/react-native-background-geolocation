@@ -9,7 +9,7 @@ type iOSActivityType = 'AutomotiveNavigation' | 'OtherNavigation' | 'Fitness' | 
 type NativeProvider = 'gps' | 'network' | 'passive' | 'fused';
 type ActivityType = 'IN_VEHICLE' | 'ON_BICYCLE' | 'ON_FOOT' | 'RUNNING' | 'STILL' | 'TILTING' | 'UNKNOWN' | 'WALKING';
 type LogLevel = 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
-type LocationProvider = 0 | 1 | 2;
+type LocationProvider = 0  | 2 | 3;
 type AuthorizationStatus = 0 | 1 | 2;
 type AccuracyLevel = 0 | 100 | 1000 | 10000 | number;
 type LocationErrorCode = 1 | 2 | 3;
@@ -24,7 +24,7 @@ export interface ConfigureOptions {
    *  DISTANCE_FILTER_PROVIDER,
    *  ACTIVITY_PROVIDER
    *  RAW_PROVIDER
-   *
+   *  FUSED_PROVIDER
    * @default DISTANCE_FILTER_PROVIDER
    * @example
    * { locationProvider: BackgroundGeolocation.RAW_PROVIDER }
@@ -475,8 +475,8 @@ export interface HeadlessTaskEvent {
 export interface BackgroundGeolocationPlugin {
 
   DISTANCE_FILTER_PROVIDER: LocationProvider;
-  ACTIVITY_PROVIDER: LocationProvider;
   RAW_PROVIDER: LocationProvider;
+  FUSED_PROVIDER: LocationProvider;
 
   BACKGROUND_MODE: ServiceMode;
   FOREGROUND_MODE: ServiceMode;
