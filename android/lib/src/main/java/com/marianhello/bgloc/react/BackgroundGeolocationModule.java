@@ -106,6 +106,7 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
      */
     @Override
     public void onHostResume() {
+        if (getContext() == null) return;
         logger.info("App will be resumed");
         facade.resume();
         sendEvent(FOREGROUND_EVENT, null);
@@ -116,6 +117,7 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
      */
     @Override
     public void onHostPause() {
+        if (getContext() == null) return;
         logger.info("App will be paused");
         facade.pause();
         sendEvent(BACKGROUND_EVENT, null);
@@ -127,6 +129,7 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
      */
     @Override
     public void onHostDestroy() {
+        if (getContext() == null) return;
         logger.info("Destroying plugin");
         facade.destroy();
 //        facade = null;
