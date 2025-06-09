@@ -106,7 +106,7 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
      */
     @Override
     public void onHostResume() {
-        if (getContext() == null) return;
+        if (getContext() == null || facade == null) return;
         logger.info("App will be resumed");
         facade.resume();
         sendEvent(FOREGROUND_EVENT, null);
@@ -117,7 +117,7 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
      */
     @Override
     public void onHostPause() {
-        if (getContext() == null) return;
+        if (getContext() == null || facade == null) return;
         logger.info("App will be paused");
         facade.pause();
         sendEvent(BACKGROUND_EVENT, null);
@@ -129,11 +129,13 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
      */
     @Override
     public void onHostDestroy() {
-        if (getContext() == null) return;
+        if (getContext() == null || facade == null) return;
         logger.info("Destroying plugin");
         facade.destroy();
 //        facade = null;
     }
+
+
 
     private void runOnBackgroundThread(Runnable runnable) {
         // currently react-native has no other thread we can run on
