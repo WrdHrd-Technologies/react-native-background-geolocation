@@ -16,6 +16,7 @@ import com.marianhello.bgloc.BackgroundGeolocationFacade;
 import com.marianhello.bgloc.Config;
 import com.marianhello.bgloc.PluginDelegate;
 import com.marianhello.bgloc.PluginException;
+import com.marianhello.bgloc.Setting;
 import com.marianhello.bgloc.data.BackgroundActivity;
 import com.marianhello.bgloc.data.BackgroundLocation;
 import com.marianhello.bgloc.react.data.LocationMapper;
@@ -146,11 +147,28 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
     @ReactMethod
     public void start() {
         facade.start();
+        try {
+            Setting setting = new Setting();
+            setting.setStarted(true);
+            setting.setUpdatedAt((int) RealTimeHelper.now().getTime());
+            facade.setting(setting);
+        }
+        catch(Exception ignore){
+        }
     }
 
     @ReactMethod
     public void stop() {
         facade.stop();
+
+        try {
+            Setting setting = new Setting();
+            setting.setStarted(false);
+            setting.setUpdatedAt((int) RealTimeHelper.now().getTime());
+            facade.setting(setting);
+        }
+        catch(Exception ignore){
+        }
     }
 
     @ReactMethod
