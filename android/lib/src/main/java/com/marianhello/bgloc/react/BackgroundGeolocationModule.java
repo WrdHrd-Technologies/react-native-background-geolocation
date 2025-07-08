@@ -146,12 +146,12 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
 
     @ReactMethod
     public void start() {
-        facade.start();
         try {
             Setting setting = new Setting();
             setting.setStarted(true);
             setting.setUpdatedAt((int) RealTimeHelper.now().getTime());
             facade.setting(setting);
+            facade.start();
         }
         catch(Exception ignore){
         }
