@@ -640,6 +640,21 @@ export interface BackgroundGeolocationPlugin {
   ): void;
 
   /**
+   * Delete all stored locations before a given timestamp
+   *
+   * Platform: Android
+   *
+   *
+   * @param success
+   * @param fail
+   */
+  deleteAllLocationsPermanent(
+    millisBeforeTimeStamp: number,
+    success?: () => void,
+    fail?: (error: BackgroundGeolocationError) => void
+  ): void;
+
+  /**
    * Switch plugin operation mode,
    *
    * Platform: iOS
