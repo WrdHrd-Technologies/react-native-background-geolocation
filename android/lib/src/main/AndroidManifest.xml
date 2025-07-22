@@ -24,7 +24,6 @@
         <service
             android:name="com.marianhello.bgloc.sync.SyncService"
             android:exported="true"
-            android:process=":sync"
             android:foregroundServiceType="dataSync">
             <intent-filter>
                 <action android:name="android.content.SyncAdapter"/>

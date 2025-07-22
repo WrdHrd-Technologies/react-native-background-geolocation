@@ -272,6 +272,15 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
             }
         });
     }
+    @ReactMethod
+    public void deleteAllLocationsPermanent(final double millisBeforeTimeStamp,final Callback success, Callback error) {
+        runOnBackgroundThread(new Runnable() {
+            public void run() {
+                facade.deleteAllLocationsPermanent((long)millisBeforeTimeStamp);
+                success.invoke(true);
+            }
+        });
+    }
 
     @ReactMethod
     public void getCurrentLocation(final ReadableMap options, final Callback success, final Callback error) {
