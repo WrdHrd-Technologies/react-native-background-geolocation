@@ -123,7 +123,9 @@ var BackgroundGeolocation = {
   deleteAllLocationsPermanent: function(millisBeforeTimeStamp, successFn, errorFn) {
     successFn = successFn || emptyFn;
     errorFn = errorFn || emptyFn;
-    RNBackgroundGeolocation.deleteAllLocationsPermanent(millisBeforeTimeStamp, successFn, errorFn);
+    if(Platform.OS === 'android') {
+      RNBackgroundGeolocation.deleteAllLocationsPermanent(millisBeforeTimeStamp, successFn, errorFn);
+    }
   },
   switchMode: function(modeId, successFn, errorFn) {
     successFn = successFn || emptyFn;
