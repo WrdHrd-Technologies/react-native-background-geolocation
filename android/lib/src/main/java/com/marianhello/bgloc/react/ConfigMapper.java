@@ -54,7 +54,7 @@ public class ConfigMapper {
         if (options.hasKey("interval")) config.setInterval(options.getInt("interval"));
         if (options.hasKey("fastestInterval")) config.setFastestInterval(options.getInt("fastestInterval"));
         if (options.hasKey("activitiesInterval")) config.setActivitiesInterval(options.getInt("activitiesInterval"));
-        if (options.hasKey("stationaryInterval")) config.setStationaryInterval(options.getInt("stationaryInterval"));
+        if (options.hasKey("heartbeatInterval")) config.setHeartbeatInterval(options.getInt("heartbeatInterval"));
         if (options.hasKey("stopOnStillActivity")) config.setStopOnStillActivity(options.getBoolean("stopOnStillActivity"));
         if (options.hasKey("url")) config.setUrl(
                 !options.isNull("url") ? options.getString("url") : Config.NullString
@@ -166,8 +166,8 @@ public class ConfigMapper {
         if (config.getActivitiesInterval() != null) {
             out.putInt("activitiesInterval", config.getActivitiesInterval());
         }
-        if (config.getStationaryInterval() != null) {
-            out.putInt("stationaryInterval", config.getStationaryInterval());
+        if (config.getHeartbeatInterval() != null) {
+            out.putInt("heartbeatInterval", config.getHeartbeatInterval());
         }
         if (config.getStopOnStillActivity() != null) {
             out.putBoolean("stopOnStillActivity", config.getStopOnStillActivity());

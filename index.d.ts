@@ -144,7 +144,7 @@ export interface ConfigureOptions {
    *
    * @default 0
    */
-  stationaryInterval?: number;
+  heartbeatInterval?: number;
 
   /**
    * @deprecated Stop location updates, when the STILL activity is detected.

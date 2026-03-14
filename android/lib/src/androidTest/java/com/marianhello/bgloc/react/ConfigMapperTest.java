@@ -55,7 +55,7 @@ public class ConfigMapperTest {
         Assert.assertEquals(config.getInterval().intValue(), map.getInt("interval"));
         Assert.assertEquals(config.getFastestInterval().intValue(), map.getInt("fastestInterval"));
         Assert.assertEquals(config.getActivitiesInterval().intValue(), map.getInt("activitiesInterval"));
-        Assert.assertEquals(config.getStationaryInterval().intValue(), map.getInt("stationaryInterval"));
+        Assert.assertEquals(config.getHeartbeatInterval().intValue(), map.getInt("heartbeatInterval"));
         Assert.assertEquals(config.getNotificationIconColor(), map.getString("notificationIconColor"));
         Assert.assertEquals(config.getLargeNotificationIcon(), map.getString("notificationIconLarge"));
         Assert.assertEquals(config.getSmallNotificationIcon(), map.getString("notificationIconSmall"));
