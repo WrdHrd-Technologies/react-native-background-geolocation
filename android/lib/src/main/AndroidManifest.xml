@@ -40,6 +40,7 @@
                 android:name="android.accounts.AccountAuthenticator"
                 android:resource="@xml/authenticator" />
         </service>
+        
         <provider
             android:name="com.marianhello.bgloc.data.provider.LocationContentProvider"
             android:authorities="@string/mauron85_bgloc_content_authority"
@@ -52,6 +53,9 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+        <receiver android:name="com.marianhello.bgloc.service.GeofenceBroadcastReceiver"
+          android:enabled="true"
+          android:exported="true" />
     </application>
 
     <uses-permission android:name="android.hardware.location" />
