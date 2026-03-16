@@ -21,7 +21,7 @@
     android:versionName="1.0" android:versionCode="1">
     <application>
         <service android:name=".floatingview.FloatingViewService" android:foregroundServiceType="location" android:exported="false" />
-        <service
+        <!-- <service
             android:name="com.marianhello.bgloc.sync.SyncService"
             android:exported="true"
             android:foregroundServiceType="dataSync">
@@ -30,8 +30,8 @@
             </intent-filter>
             <meta-data android:name="android.content.SyncAdapter"
                 android:resource="@xml/syncadapter"/>
-        </service>
-        <service
+        </service> -->
+        <!-- <service
             android:name="com.marianhello.bgloc.sync.AuthenticatorService" android:exported="true">
             <intent-filter>
                 <action android:name="android.accounts.AccountAuthenticator"/>
@@ -39,13 +39,12 @@
             <meta-data
                 android:name="android.accounts.AccountAuthenticator"
                 android:resource="@xml/authenticator" />
-        </service>
+        </service> -->
         
         <provider
             android:name="com.marianhello.bgloc.data.provider.LocationContentProvider"
             android:authorities="@string/mauron85_bgloc_content_authority"
-            android:exported="false"
-            android:syncable="true"/>
+            android:exported="false"/>
         <service android:enabled="true" android:exported="false" android:name="com.marianhello.bgloc.service.LocationServiceImpl" android:foregroundServiceType="location|dataSync"/>
         <service android:enabled="true" android:exported="false" android:name="com.marianhello.bgloc.react.headless.HeadlessService" />
         <receiver android:enabled="true" android:exported="true" android:name="com.marianhello.bgloc.BootCompletedReceiver">
