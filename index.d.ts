@@ -9,7 +9,7 @@ type iOSActivityType = 'AutomotiveNavigation' | 'OtherNavigation' | 'Fitness' | 
 type NativeProvider = 'gps' | 'network' | 'passive' | 'fused';
 type ActivityType = 'IN_VEHICLE' | 'ON_BICYCLE' | 'ON_FOOT' | 'RUNNING' | 'STILL' | 'TILTING' | 'UNKNOWN' | 'WALKING';
 type LogLevel = 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
-type LocationProvider = 0  | 2 | 3;
+type LocationProvider = 0  | 2 | 3 | 4;
 type AuthorizationStatus = 0 | 1 | 2;
 type AccuracyLevel = 0 | 100 | 1000 | 10000 | number;
 type LocationErrorCode = 1 | 2 | 3;
@@ -25,6 +25,7 @@ export interface ConfigureOptions {
    *  ACTIVITY_PROVIDER
    *  RAW_PROVIDER
    *  FUSED_PROVIDER
+   *  FUSED_DISTANCE_FILTER_PROVIDER
    * @default DISTANCE_FILTER_PROVIDER
    * @example
    * { locationProvider: BackgroundGeolocation.RAW_PROVIDER }
@@ -54,7 +55,7 @@ export interface ConfigureOptions {
    *
    * When stopped, the minimum distance the device must move beyond the stationary location for aggressive background-tracking to engage.
    * Platform: all
-   * Provider: DISTANCE_FILTER
+   * Provider: DISTANCE_FILTER | FUSED_DISTANCE_FILTER
    *
    * @default 50
    */
@@ -74,7 +75,7 @@ export interface ConfigureOptions {
    * The minimum distance (measured in meters) a device must move horizontally before an update event is generated.
    *
    * Platform: all
-   * Provider: DISTANCE_FILTER, RAW
+   * Provider: DISTANCE_FILTER, RAW, FUSED_DISTANCE_FILTER
    *
    * @default 500
    * @see {@link https://apple.co/2oHo2CV|Apple docs}
@@ -140,7 +141,7 @@ export interface ConfigureOptions {
    * Value must be Greater than 300000 milliseconds
    *
    * Platform: Android
-   * Provider: DISTANCE_FILTER
+   * Provider: DISTANCE_FILTER, FUSED_DISTANCE_FILTER
    *
    * @default 0
    */
@@ -477,6 +478,7 @@ export interface BackgroundGeolocationPlugin {
   DISTANCE_FILTER_PROVIDER: LocationProvider;
   RAW_PROVIDER: LocationProvider;
   FUSED_PROVIDER: LocationProvider;
+  FUSED_DISTANCE_FILTER_PROVIDER: LocationProvider;
 
   BACKGROUND_MODE: ServiceMode;
   FOREGROUND_MODE: ServiceMode;
