@@ -52,9 +52,10 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
-        <receiver android:name="com.marianhello.bgloc.HeartbeatReceiver"
-          android:enabled="true"
-          android:exported="false" />
+         <receiver 
+            android:name="com.wrdhrd.bgloc.ActivityRecognitionReceiver" 
+            android:enabled="true" 
+            android:exported="false" />
     </application>
 
     <uses-permission android:name="android.hardware.location" />
