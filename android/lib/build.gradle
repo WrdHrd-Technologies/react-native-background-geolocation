@@ -1,80 +1,47 @@
-// Notice: Oreo builds are disabled by default until all problems are resolved!!!
-//
-// For Oreo compatibility we are forced to use supportLibVersion >= 26.1.0
-// Unfortunately Android stopped supporting downloading libraries through the SDK Manager,
-// @see https://developer.android.com/topic/libraries/support-library/setup.html
-//
-// You can enable oreo by adding following into root build.gradle:
-//
-// allprojects {
-//   repositories {
-//     maven { url 'https://maven.google.com' }
-//   }
-// }
-//
-// ext {
-//   compileSdkVersion = 26
-//   targetSdkVersion = 26
-//   buildToolsVersion = "26.0.2"
-//   supportLibVersion = "26.1.0"
-//   googlePlayServicesVersion = "11.8.0"
-// }
-//
-//
-// If you don't like this please ask react guys nicely to add google maven repo into
-// their templates.
-
 apply plugin: 'com.android.library'
 
-apply from: '../common/VERSIONS.gradle'
-def hasApp = findProject(':app') != null
+def safeExtGet(prop, fallback) {
+    rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}
 
-// https://hackernoon.com/android-how-to-add-gradle-dependencies-using-foreach-c4cbcc070458
-def projDependencies = [
-    [configuration: "implementation", dependency: libs.slf4j],
-    [configuration: "implementation", dependency: libs.reactNative],
-    [configuration: "testImplementation", dependency: testLibs.testRunner],
-    [configuration: "testImplementation", dependency: testLibs.testRules],
-    [configuration: "testImplementation", dependency: testLibs.junit],
-    [configuration: "testImplementation", dependency: testLibs.powermockMockito],
-    [configuration: "testImplementation", dependency: testLibs.powermockjUnit],
-    [configuration: "testImplementation", dependency: testLibs.powermockClassloading],
-    [configuration: "testImplementation", dependency: testLibs.mockitoCore],
-    [configuration: "testImplementation", dependency: testLibs.festAssertCore],
-    [configuration: "testImplementation", dependency: testLibs.robolectric],
-    [configuration: "androidTestImplementation", dependency: testLibs.testRunner],
-    [configuration: "androidTestImplementation", dependency: testLibs.testRules],
-]
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:7.4.2' 
+    }
+}
 
 repositories {
-    // Google dependencies are now hosted at Maven
-    // unfortunately this is ignored when installing as react-native plugin
-    maven {
-        url 'https://maven.google.com'
-    }
-    jcenter()
+    google()
+    mavenCentral()
+    maven { url 'https://jitpack.io' }
 }
 
 android {
     namespace "com.marianhello.bgloc.react"
-    compileSdkVersion project.ext.getCompileSdkVersion()
-    buildToolsVersion project.ext.getBuildToolsVersion()
-    if (hasApp) {
-        evaluationDependsOn(':app')
-    }
+    
+    compileSdkVersion safeExtGet('compileSdkVersion', 34)
+    buildToolsVersion safeExtGet('buildToolsVersion', '34.0.0')
 
-    // Tip: https://stackoverflow.com/questions/39987669/renamingdelegatingcontext-is-deprecated-how-do-we-test-sqlite-db-now/52170737#52170737
-    // Gradle automatically adds 'android.test.runner' as a dependency.
     useLibrary 'android.test.runner'
     useLibrary 'android.test.base'
     useLibrary 'android.test.mock'
 
     defaultConfig {
-        testInstrumentationRunner "android.support.test.runner.AndroidJUnitRunner"
-        minSdkVersion project.ext.getMinSdkVersion()
-        targetSdkVersion project.ext.getTargetSdkVersion()
-        versionCode 1 // intentionally not updating version as we're not uploading to any java repository
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        
+        minSdkVersion safeExtGet('minSdkVersion', 24)
+        targetSdkVersion safeExtGet('targetSdkVersion', 34)
+        versionCode 1
         versionName "1.0"
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
     }
 
     lintOptions {
@@ -85,7 +52,13 @@ android {
 dependencies {
     implementation project(path: ':@wrdhrd_react-native-background-geolocation-common')
 
-    projDependencies.each {
-        add(it.configuration, it.dependency)
-    }
+    implementation 'com.facebook.react:react-native:+'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'org.slf4j:slf4j-api:1.7.36'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-core:4.11.0'
+    testImplementation 'org.robolectric:robolectric:4.10.3'
+    androidTestImplementation 'androidx.test:runner:1.5.2'
+    androidTestImplementation 'androidx.test:rules:1.5.0'
 }
