@@ -21,7 +21,7 @@ repositories {
 }
 
 android {
-    namespace "com.marianhello.bgloc.react"
+    namespace "com.marianhello.bgloc"
     
     compileSdkVersion safeExtGet('compileSdkVersion', 34)
     buildToolsVersion safeExtGet('buildToolsVersion', '34.0.0')
