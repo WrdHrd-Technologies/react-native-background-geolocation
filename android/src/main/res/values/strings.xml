@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">app_name</string>
+     <string name="mauron85_bgloc_content_authority">com.marianhello.app.mauron85.bgloc.provider</string>
+</resources>

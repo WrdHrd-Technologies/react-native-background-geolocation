@@ -1,5 +1,0 @@
-include ':@wrdhrd_react-native-background-geolocation'
-project(':@wrdhrd_react-native-background-geolocation').projectDir = new File(rootProject.projectDir, '../node_modules/@wrdhrd/react-native-background-geolocation/android')
-
-include ':@wrdhrd_react-native-background-geolocation-common'
-project(':@wrdhrd_react-native-background-geolocation-common').projectDir = new File(rootProject.projectDir, '../node_modules/@wrdhrd/react-native-background-geolocation/android/common')

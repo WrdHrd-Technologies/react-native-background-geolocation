@@ -1,39 +1,68 @@
-buildscript {
-    def safeExtGet(prop, fallback) {
-        rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
-    }
+apply plugin: 'com.android.library'
 
+def safeExtGet(prop, fallback) {
+    rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}
+
+buildscript {
     repositories {
         google()
         mavenCentral()
     }
     dependencies {
-        classpath("com.android.tools.build:gradle:${safeExtGet('androidGradlePluginVersion', '7.4.2')}")
+        classpath 'com.android.tools.build:gradle:7.4.2' 
     }
 }
 
-allprojects {
-    repositories {
-        mavenLocal()
-        maven {
-            url "$rootDir/../node_modules/react-native/android"
-        }
-        google()
-        mavenCentral()
-        maven { url 'https://jitpack.io' }
-        
-        maven {
-            url 'https://repo.spring.io/plugins-release/'
-            name 'Spring Plugins'
-        }
+repositories {
+    google()
+    mavenCentral()
+    maven { url 'https://jitpack.io' }
+}
+
+android {
+    namespace "com.marianhello.bgloc.react"
+    
+    compileSdkVersion safeExtGet('compileSdkVersion', 34)
+    buildToolsVersion safeExtGet('buildToolsVersion', '34.0.0')
+
+    defaultConfig {
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        minSdkVersion safeExtGet('minSdkVersion', 24)
+        targetSdkVersion safeExtGet('targetSdkVersion', 34)
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    lintOptions {
+        abortOnError false
     }
 }
 
+dependencies {
+    implementation 'com.facebook.react:react-native:+'
+    implementation "androidx.appcompat:appcompat:${safeExtGet('appCompatVersion', '1.6.1')}"
+    implementation "androidx.core:core:${safeExtGet('coreVersion', '1.12.0')}"
+    implementation "androidx.work:work-runtime:${safeExtGet('workVersion', '2.9.0')}"
+    implementation 'androidx.localbroadcastmanager:localbroadcastmanager:1.1.0'
 
-ext {
-    reactNativeLibVersion = safeExtGet('reactNativeVersion', '+')
-}
+    implementation "com.google.android.gms:play-services-location:${safeExtGet('playServicesLocationVersion', '21.2.0')}"
 
-task clean(type: Delete) {
-    delete rootProject.buildDir
+    implementation "com.github.suman379:RealTime:master-SNAPSHOT" 
+    implementation 'com.github.tony19:logback-android:2.0.0'
+    implementation 'org.slf4j:slf4j-api:1.7.36'
+    implementation 'com.github.jparkie:promise:1.0.3'
+    implementation('io.github.nishkarsh:android-permissions:0.1.7') {
+        exclude group: 'com.android.support', module: 'appcompat-v7'
+    }
+
+    // Testing Suite
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-core:4.11.0'
+    testImplementation 'org.robolectric:robolectric:4.10.3'
+    androidTestImplementation 'androidx.test:runner:1.5.2'
+    androidTestImplementation 'androidx.test:rules:1.5.0'
 }
