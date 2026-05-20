@@ -114,8 +114,6 @@ public class BackgroundGeolocationFacade {
         logger.info("Initializing plugin");
 
         NotificationHelper.registerAllChannels(getApplicationContext());
-
-        auditUngracefulKill();
     }
 
     private BroadcastReceiver locationModeChangeReceiver = new BroadcastReceiver() {
@@ -635,78 +633,5 @@ public class BackgroundGeolocationFacade {
         return LocationServiceImpl.getLocationTransform();
     }
 
-    private void auditUngracefulKill() {
-        try {
-            boolean shouldBeRunning = getSetting().isStarted();
-            boolean isActuallyRunning = isServiceRunningInOS(LocationServiceImpl.class);;
 
-            if (shouldBeRunning && !isActuallyRunning) {
-                LocationDAO dao = DAOFactory.createLocationDAO(getContext());
-                BackgroundLocation lastKnown = dao.getValidLatestLocation();
-
-                long deviceUptimeMillis = SystemClock.elapsedRealtime();
-                long tenMinutesMillis = 10 * 60 * 1000L;
-
-                double lastLat = 0.0;
-                double lastLon = 0.0;
-                float accuracy = 0.0f;
-                float radius = 0.0f;
-                double altitude = 0.0;
-                float speed = 0.0f;
-
-                if (lastKnown != null) {
-                    lastLat = lastKnown.getLatitude();
-                    lastLon = lastKnown.getLongitude();
-                    accuracy = lastKnown.getAccuracy();
-                    radius = lastKnown.getRadius();
-                    altitude = lastKnown.getAltitude();
-                    speed = lastKnown.getSpeed();
-                    logger.debug("Audit Ghost Point anchored to native DAO location: {}, {}", lastLat, lastLon);
-                }
-
-                BackgroundLocation ghostLocation = new BackgroundLocation();
-                ghostLocation.setTime(System.currentTimeMillis());
-                ghostLocation.setLocationId(null);
-                ghostLocation.setSpeed(speed);
-                ghostLocation.setAccuracy(accuracy);
-                ghostLocation.setAltitude(altitude);
-                ghostLocation.setRadius(radius);
-                ghostLocation.setStatus(SYNC_PENDING);
-                ghostLocation.setBatchStartMillis(null);
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-                    ghostLocation.setElapsedRealtimeNanos(SystemClock.elapsedRealtimeNanos());
-                }
-                ghostLocation.setBatteryLevel(0);
-                ghostLocation.setIsCharging(false);
-
-                if (deviceUptimeMillis < tenMinutesMillis) {
-                    logger.warn("AUDIT: Phone recently booted up. Logging as Device Reboot/Dead Battery.");
-                    ghostLocation.setProvider("system|DEVICE_REBOOT_RECOVERED");
-                } else {
-                    logger.warn("AUDIT FAIL: Phone has been running, but app is dead. Logging as Force Stop.");
-                    ghostLocation.setProvider("system|UNGRACEFUL_KILL_RECOVERED");
-                }
-
-                dao.persistLocation(ghostLocation);
-                forceSync();
-
-            } else {
-                logger.info("AUDIT PASS: Service state matches database state.");
-            }
-        } catch (Exception e) {
-            logger.error("Failed to execute ungraceful kill audit", e);
-        }
-    }
-
-    private boolean isServiceRunningInOS(Class<?> serviceClass) {
-        android.app.ActivityManager manager = (android.app.ActivityManager) getContext().getSystemService(Context.ACTIVITY_SERVICE);
-        if (manager != null) {
-            for (android.app.ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
-                if (serviceClass.getName().equals(service.service.getClassName())) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
 }
