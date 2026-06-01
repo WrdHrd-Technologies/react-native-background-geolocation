@@ -1,97 +1,121 @@
 package com.marianhello.logging;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 
-public class LogEntry {
-    private Integer id;
-    private Integer context;
+public final class LogEntry {
+    private int id;
+    private int context;
     private String level;
     private String message;
-    private Long timestamp;
+    private long timestamp;
     private String loggerName;
-    private Collection<String> stackTrace;
+    
+    private Collection<String> stackTrace = new ArrayList<>();
 
-    public Integer getId() {
+    public int getId() {
         return id;
     }
 
-    public void setId(Integer id) {
+    public void setId(int id) {
         this.id = id;
     }
 
-    public Integer getContext() {
+    public int getContext() {
         return context;
     }
 
-    public void setContext(Integer context) {
+    public void setContext(int context) {
         this.context = context;
     }
 
+    @NonNull
     public String getLevel() {
-        return level;
+        return level != null ? level : "INFO";
     }
 
-    public void setLevel(String level) {
+    public void setLevel(@Nullable String level) {
         this.level = level;
     }
 
+    @NonNull
     public String getMessage() {
-        return message;
+        return message != null ? message : "";
     }
 
-    public void setMessage(String message) {
+    public void setMessage(@Nullable String message) {
         this.message = message;
     }
 
-    public Long getTimestamp() {
+    public long getTimestamp() {
         return timestamp;
     }
 
-    public void setTimestamp(Long timestamp) {
+    public void setTimestamp(long timestamp) {
         this.timestamp = timestamp;
     }
 
+    @NonNull
     public String getLoggerName() {
-        return loggerName;
+        return loggerName != null ? loggerName : "";
     }
 
-    public void setLoggerName(String loggerName) {
+    public void setLoggerName(@Nullable String loggerName) {
         this.loggerName = loggerName;
     }
 
     public boolean hasStackTrace() {
-        return stackTrace != null;
+        return stackTrace != null && !stackTrace.isEmpty();
     }
 
-    public String getStackTrace() {
-        if (this.stackTrace == null) {
-            return null;
-        }
+    @NonNull
+    public Collection<String> getStackTrace() {
+        return stackTrace != null ? stackTrace : Collections.emptyList();
+    }
 
-        StringBuilder stackTraceBuilder = new StringBuilder();
+    public void setStackTrace(@Nullable Collection<String> stackTrace) {
+        this.stackTrace = (stackTrace != null) ? stackTrace : new ArrayList<>();
+    }
+
+    @NonNull
+    public String getStackTraceAsFormattedString() {
+        if (!hasStackTrace()) return "";
+
+        StringBuilder sb = new StringBuilder(this.stackTrace.size() * 128);
         for (String traceLine : this.stackTrace) {
-            stackTraceBuilder.append(traceLine).append("\n");
+            if (traceLine != null) {
+                sb.append(traceLine).append('\n'); // Single quotes ensure character primitive optimization
+            }
         }
-        return stackTraceBuilder.toString();
+        return sb.toString();
     }
 
-    public void setStackTrace(Collection<String> stackTrace) {
-        this.stackTrace = stackTrace;
-    }
-
+    @NonNull
     public JSONObject toJSONObject() throws JSONException {
         JSONObject json = new JSONObject();
         json.put("id", this.id);
         json.put("context", this.context);
-        json.put("level", this.level);
-        json.put("message", this.message);
+        json.put("level", getLevel());
+        json.put("message", getMessage());
         json.put("timestamp", this.timestamp);
-        json.put("logger", this.loggerName);
+        json.put("logger", getLoggerName());
+        
         if (hasStackTrace()) {
-            json.put("stackTrace", this.getStackTrace());
+            JSONArray jsonTraceArray = new JSONArray();
+            for (String traceLine : this.stackTrace) {
+                if (traceLine != null) {
+                    jsonTraceArray.put(traceLine);
+                }
+            }
+            json.put("stackTrace", jsonTraceArray);
         }
 
         return json;

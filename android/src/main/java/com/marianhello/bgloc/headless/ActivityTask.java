@@ -1,16 +1,18 @@
 package com.marianhello.bgloc.headless;
 
 import android.os.Bundle;
+import android.util.Log;
+import androidx.annotation.NonNull;
 
 import com.marianhello.bgloc.data.BackgroundActivity;
-
 import org.json.JSONException;
 
 public abstract class ActivityTask extends Task {
-    private BackgroundActivity mActivity;
+    private static final String TAG = "ActivityTask";
+    private final BackgroundActivity mActivity;
 
-    public ActivityTask(BackgroundActivity activity) {
-        mActivity = activity;
+    public ActivityTask(@NonNull BackgroundActivity activity) {
+        this.mActivity = activity;
     }
 
     @Override
@@ -31,18 +33,20 @@ public abstract class ActivityTask extends Task {
         return bundle;
     }
 
+   
+    @NonNull
     @Override
     public String toString() {
-        if (mActivity == null) {
-            return null;
-        }
-
         try {
-            return mActivity.toJSONObject().toString();
+            if (mActivity.toJSONObject() != null) {
+                return mActivity.toJSONObject().toString();
+            }
         } catch (JSONException e) {
-            onError("Error processing params: " + e.getMessage());
+            onError("Fatal serialization mismatch inside headless task encoder: " + e.getMessage());
+            Log.e(TAG, "Failed to compile Activity record to raw JSON string representation.", e);
         }
 
-        return null;
+        return "{\"name\":\"" + getName() + "\",\"error\":\"Serialization failed\",\"type\":\"" 
+                + BackgroundActivity.getActivityString(mActivity.getType()) + "\"}";
     }
 }

@@ -1,13 +1,13 @@
 package com.marianhello.bgloc.headless;
 
 import android.os.Bundle;
+import androidx.annotation.NonNull;
 
 import com.marianhello.bgloc.data.BackgroundLocation;
 
-import org.json.JSONException;
-
 public abstract class StationaryTask extends LocationTask {
-    public StationaryTask(BackgroundLocation location) {
+
+    public StationaryTask(@NonNull BackgroundLocation location) {
         super(location);
     }
 
@@ -19,6 +19,19 @@ public abstract class StationaryTask extends LocationTask {
     @Override
     public Bundle getBundle() {
         Bundle bundle = super.getBundle();
+        if (bundle == null) {
+            bundle = new Bundle();
+        }
+
+        Bundle params = bundle.getBundle("params");
+        if (params == null) {
+            params = new Bundle();
+        }
+
+        params.putBoolean("is_stationary_heartbeat", true);
+        params.putInt("device_movement_state", 0); 
+
+        bundle.putBundle("params", params);
 
         return bundle;
     }

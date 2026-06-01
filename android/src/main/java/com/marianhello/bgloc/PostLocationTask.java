@@ -8,26 +8,13 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Location task to post/sync locations from location providers
- *
- * All locations updates are recorded in local db at all times.
- * Also location is also send to all messenger clients.
- *
- * If option.url is defined, each location is also immediately posted.
- * If post is successful, the location is deleted from local db.
- * All failed to post locations are coalesced and send in some time later in one single batch.
- * Batch sync takes place only when number of failed to post locations reaches syncTreshold.
- *
- * If only option.syncUrl is defined, locations are send only in single batch,
- * when number of locations reaches syncTreshold.
- *
- */
 public class PostLocationTask {
     private final LocationDAO mLocationDAO;
     private final PostLocationTaskListener mTaskListener;
@@ -68,12 +55,22 @@ public class PostLocationTask {
     }
 
     public void clearQueue() {
-        // mExecutor.execute(new Runnable() {
-        //     @Override
-        //     public void run() {
-        //         mLocationDAO.deleteUnpostedLocations();
-        //     }
-        // });
+        logger.info("Scheduling non-posted local location queue data clearance.");
+        try {
+            mExecutor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        mLocationDAO.deleteAllLocations();
+                        logger.debug("Local SQLite pending location database records purged successfully.");
+                    } catch (Exception e) {
+                        logger.error("Failed executing unposted locations data cleanup inside background thread.", e);
+                    }
+                }
+            });
+        } catch (RejectedExecutionException ex) {
+            logger.error("Executor rejected clearQueue command track execution.", ex);
+        }
     }
 
     public void add(final BackgroundLocation location) {
@@ -88,34 +85,13 @@ public class PostLocationTask {
                 public void run() {
                     long locationId = mLocationDAO.persistLocation(location);
                     location.setLocationId(locationId);
-                    
+
                     post(location);
                 }
             });
         } catch (RejectedExecutionException ex) {
-            // Executor is shutting down. We can't save this location safely here 
-            // without blocking the main thread. Log it and drop it.
             logger.error("Executor rejected location, cannot persist.", ex);
         }
-
-        // if (mConfig == null) {
-        //     logger.warn("PostLocationTask has no config. Did you called setConfig? Skipping location.");
-        //     return;
-        // }
-
-        // long locationId = mLocationDAO.persistLocation(location);
-        // location.setLocationId(locationId);
-
-        // try {
-        //     mExecutor.execute(new Runnable() {
-        //         @Override
-        //         public void run() {
-        //             post(location);
-        //         }
-        //     });
-        // } catch (RejectedExecutionException ex) {
-        //     mLocationDAO.updateLocationForSync(locationId);
-        // }
     }
 
     public void shutdown() {
@@ -127,7 +103,6 @@ public class PostLocationTask {
         try {
             if (!mExecutor.awaitTermination(waitSeconds, TimeUnit.SECONDS)) {
                 mExecutor.shutdownNow();
-                //mLocationDAO.deleteUnpostedLocations();
             }
         } catch (InterruptedException e) {
             mExecutor.shutdownNow();
@@ -141,7 +116,7 @@ public class PostLocationTask {
             if (postLocation(location)) {
                 mLocationDAO.deleteLocationById(locationId);
 
-                return; // if posted successfully do nothing more
+                return;
             } else {
                 mLocationDAO.updateLocationForSync(locationId);
             }
@@ -170,11 +145,13 @@ public class PostLocationTask {
         }
 
         String url = mConfig.getUrl();
+
+        Map<String, String> safeHeaders = mConfig.getHttpHeaders();
         logger.debug("Posting json to url: {} headers: {}", url, mConfig.getHttpHeaders());
         int responseCode;
 
         try {
-            responseCode = HttpPostService.postJSON(url, jsonLocations, mConfig.getHttpHeaders());
+            responseCode = HttpPostService.postJSON(url, jsonLocations, safeHeaders);
         } catch (Exception e) {
             mHasConnectivity = mConnectivityListener.hasConnectivity();
             logger.warn("Error while posting locations: {}", e.getMessage());
@@ -182,8 +159,6 @@ public class PostLocationTask {
         }
 
         if (responseCode == 285) {
-            // Okay, but we don't need to continue sending these
-
             logger.debug("Location was sent to the server, and received an \"HTTP 285 Updates Not Required\"");
 
             if (mTaskListener != null)
@@ -210,7 +185,9 @@ public class PostLocationTask {
         try {
             JSONObject jsonError = new JSONObject(error.toJsonString());
             String finalUrl = targetUrl.endsWith("/error") ? targetUrl : targetUrl + "/error";
-            int responseCode = HttpPostService.postJSON(finalUrl, jsonError, mConfig.getHttpHeaders());
+            Map<String, String> safeHeaders = mConfig.getHttpHeaders();
+
+            int responseCode = HttpPostService.postJSON(finalUrl, jsonError, safeHeaders);
             if (responseCode >= 200 && responseCode < 300) {
                 logger.debug("Critical Error successfully dispatched to server.");
             }
@@ -238,6 +215,6 @@ public class PostLocationTask {
             } catch (RejectedExecutionException ex) {
                 logger.error("Error when Posting Error: {}", ex.getMessage());
             }
-        }        
+        }
     }
 }

@@ -1,82 +1,72 @@
-// Copyright (c) 2011 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
-
 package org.chromium.content.browser;
 
 import android.os.Handler;
 import android.os.Looper;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 
-/**
- * Helper methods to deal with threading related tasks.
- */
-public class ThreadUtils {
 
-    /**
-     * Run the supplied Runnable on the main thread. The method will block until
-     * the Runnable completes.
-     *
-     * @param r The Runnable to run.
-     */
-    public static void runOnUiThreadBlocking(final Runnable r) {
+public final class ThreadUtils {
+
+    private static final Handler sMainHandler = new Handler(Looper.getMainLooper());
+
+    private ThreadUtils() {
+        throw new UnsupportedOperationException("Utility infrastructure layer cannot be initialized.");
+    }
+
+    public static void runOnUiThreadBlocking(@NonNull final Runnable r) {
         if (runningOnUiThread()) {
             r.run();
         } else {
-            FutureTask<Void> task = new FutureTask<Void>(r, null);
+            FutureTask<Void> task = new FutureTask<>(r, null);
             postOnUiThread(task);
             try {
                 task.get();
-            } catch (Exception e) {
-                throw new RuntimeException("Exception occured while waiting for runnable", e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt(); 
+                throw new RuntimeException("Thread interrupted while executing synchronous UI block.", e);
+            } catch (ExecutionException e) {
+                throw new RuntimeException("Exception occurred while awaiting structural runnable completion.", e.getCause());
             }
         }
     }
 
-    /**
-     * Run the supplied Callable on the main thread, wrapping any exceptions in
-     * a RuntimeException. The method will block until the Callable completes.
-     *
-     * @param c The Callable to run
-     * @return The result of the callable
-     */
-    public static <T> T runOnUiThreadBlockingNoException(Callable<T> c) {
+    @Nullable
+    public static <T> T runOnUiThreadBlockingNoException(@NonNull Callable<T> c) {
         try {
             return runOnUiThreadBlocking(c);
         } catch (ExecutionException e) {
-            throw new RuntimeException("Error occured waiting for callable", e);
+            throw new RuntimeException("Error occurred waiting for main thread execution response.", e.getCause());
         }
     }
 
-    /**
-     * Run the supplied Callable on the main thread, The method will block until
-     * the Callable completes.
-     *
-     * @param c The Callable to run
-     * @return The result of the callable
-     * @throws ExecutionException c's exception
-     */
-    public static <T> T runOnUiThreadBlocking(Callable<T> c) throws ExecutionException {
-        FutureTask<T> task = new FutureTask<T>(c);
-        runOnUiThread(task);
+    @Nullable
+    public static <T> T runOnUiThreadBlocking(@NonNull Callable<T> c) throws ExecutionException {
+        if (runningOnUiThread()) {
+            try {
+                return c.call();
+            } catch (Exception e) {
+                throw new ExecutionException(e);
+            }
+        }
+        
+        FutureTask<T> task = new FutureTask<>(c);
+        postOnUiThread(task);
         try {
             return task.get();
         } catch (InterruptedException e) {
-            throw new RuntimeException("Interrupted waiting for callable", e);
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted waiting for callable parameters to resolve.", e);
         }
     }
 
-    /**
-     * Run the supplied FutureTask on the main thread. The method will block
-     * only if the current thread is the main thread.
-     *
-     * @param task The FutureTask to run
-     * @return The queried task (to aid inline construction)
-     */
-    public static <T> FutureTask<T> runOnUiThread(FutureTask<T> task) {
+    @NonNull
+    public static <T> FutureTask<T> runOnUiThread(@NonNull FutureTask<T> task) {
         if (runningOnUiThread()) {
             task.run();
         } else {
@@ -85,50 +75,36 @@ public class ThreadUtils {
         return task;
     }
 
-    /**
-     * Run the supplied Callable on the main thread. The method will block
-     * only if the current thread is the main thread.
-     *
-     * @param c The Callable to run
-     * @return A FutureTask wrapping the callable to retrieve results
-     */
-    public static <T> FutureTask<T> runOnUiThread(Callable<T> c) {
-        return runOnUiThread(new FutureTask<T>(c));
+    @NonNull
+    public static <T> FutureTask<T> runOnUiThread(@NonNull Callable<T> c) {
+        return runOnUiThread(new FutureTask<>(c));
     }
 
-    /**
-     * Run the supplied Runnable on the main thread. The method will block
-     * only if the current thread is the main thread.
-     *
-     * @param r The Runnable to run
-     */
-    public static void runOnUiThread(Runnable r) {
-        runOnUiThread(new FutureTask<Void>(r, null));
+    public static void runOnUiThread(@NonNull Runnable r) {
+        if (runningOnUiThread()) {
+            r.run();
+        } else {
+            sMainHandler.post(r);
+        }
     }
 
-    /**
-     * Post the supplied FutureTask to run on the main thread. The method will
-     * not block, even if called on the UI thread.
-     *
-     * @param task The FutureTask to run
-     * @return The queried task (to aid inline construction)
-     */
-    public static <T> FutureTask<T> postOnUiThread(FutureTask<T> task) {
-        new Handler(Looper.getMainLooper()).post(task);
+    @NonNull
+    public static <T> FutureTask<T> postOnUiThread(@NonNull FutureTask<T> task) {
+        sMainHandler.post(task);
         return task;
     }
 
-    /**
-     * Asserts that the current thread is running on the main thread.
-     */
-    public static void assertOnUiThread() {
-        assert runningOnUiThread();
+    public static void postOnUiThread(@NonNull Runnable r) {
+        sMainHandler.post(r);
     }
 
-    /**
-     * @return true iff the current thread is the main (UI) thread.
-     */
+    public static void assertOnUiThread() {
+        if (!runningOnUiThread()) {
+            throw new IllegalStateException("Execution boundary violation: This operation must run on the UI thread.");
+        }
+    }
+
     public static boolean runningOnUiThread() {
-        return Looper.getMainLooper() == Looper.myLooper();
+        return Looper.getMainLooper().getThread() == Thread.currentThread();
     }
 }

@@ -11,209 +11,203 @@ import android.util.Log;
 import com.marianhello.bgloc.data.BackgroundLocation;
 import com.marianhello.bgloc.data.LocationDAO;
 import com.marianhello.bgloc.data.sqlite.SQLiteLocationContract.LocationEntry;
-import ru.andremoniy.sqlbuilder.SqlExpression;
-import ru.andremoniy.sqlbuilder.SqlSelectStatement;
 
 import java.util.ArrayList;
 import java.util.Collection;
 
 public class SQLiteLocationDAO implements LocationDAO {
-  private SQLiteDatabase db;
+    private static final String TAG = "SQLiteLocationDAO";
+    private final SQLiteDatabase db;
 
-  public SQLiteLocationDAO(Context context) {
-    SQLiteOpenHelper helper = SQLiteOpenHelper.getHelper(context);
-    this.db = helper.getWritableDatabase();
-  }
-
-  public SQLiteLocationDAO(SQLiteDatabase db) {
-    this.db = db;
-  }
-
-  /**
-   * Get all locations that match whereClause
-   *
-   * @param whereClause
-   * @param whereArgs
-   * @return collection of locations
-     */
-  private Collection<BackgroundLocation> getLocations(String whereClause, String[] whereArgs) {
-    Collection<BackgroundLocation> locations = new ArrayList<BackgroundLocation>();
-
-    String[] columns = LocationEntry.PROJECTION_ALL;
-    String groupBy = null;
-    String having = null;
-    String orderBy = LocationEntry.COLUMN_NAME_TIME + " ASC";
-    Cursor cursor = null;
-
-    try {
-      cursor = db.query(
-          LocationEntry.TABLE_NAME,  // The table to query
-          columns,                   // The columns to return
-          whereClause,               // The columns for the WHERE clause
-          whereArgs,                 // The values for the WHERE clause
-          groupBy,                   // don't group the rows
-          having,                    // don't filter by row groups
-          orderBy                    // The sort order
-      );
-      while (cursor.moveToNext()) {
-        locations.add(hydrate(cursor));
-      }
-    } finally {
-      if (cursor != null) {
-        cursor.close();
-      }
+    public SQLiteLocationDAO(Context context) {
+        SQLiteOpenHelper helper = SQLiteOpenHelper.getHelper(context.getApplicationContext());
+        this.db = helper.getWritableDatabase();
     }
 
-    return locations;
-  }
-  public Collection<BackgroundLocation> getAllLocations() {
-    return getLocations(null, null);
-  }
+    public SQLiteLocationDAO(SQLiteDatabase db) {
+        this.db = db;
+    }
 
-  public Collection<BackgroundLocation> getValidLocations() {
-    String whereClause = LocationEntry.COLUMN_NAME_STATUS + " <> ?";
-    String[] whereArgs = { String.valueOf(BackgroundLocation.DELETED) };
+    private static final int INDEX_ID                  = 0;
+    private static final int INDEX_TIME                = 1;
+    private static final int INDEX_ACCURACY            = 2;
+    private static final int INDEX_SPEED               = 3;
+    private static final int INDEX_BEARING             = 4;
+    private static final int INDEX_ALTITUDE            = 5;
+    private static final int INDEX_LATITUDE            = 6;
+    private static final int INDEX_LONGITUDE           = 7;
+    private static final int INDEX_RADIUS              = 8;
+    private static final int INDEX_HAS_ACCURACY        = 9;
+    private static final int INDEX_HAS_SPEED           = 10;
+    private static final int INDEX_HAS_BEARING         = 11;
+    private static final int INDEX_HAS_ALTITUDE        = 12;
+    private static final int INDEX_HAS_RADIUS          = 13;
+    private static final int INDEX_PROVIDER            = 14;
+    private static final int INDEX_LOCATION_PROVIDER   = 15;
+    private static final int INDEX_STATUS              = 16;
+    private static final int INDEX_BATCH_START_MILLIS  = 17;
+    private static final int INDEX_MOCK_FLAGS          = 18;
+    private static final int INDEX_BATTERY_LEVEL       = 19;
+    private static final int INDEX_CHARGING_FLAG       = 20;
+    private static final int INDEX_REALTIME            = 21;
+    private static final int INDEX_ELAPSEDREALTIMENANO = 22;
 
-    return getLocations(whereClause, whereArgs);
-  }
+    private Collection<BackgroundLocation> getLocations(String whereClause, String[] whereArgs) {
+        Collection<BackgroundLocation> locations = new ArrayList<>();
+        String orderBy = LocationEntry.COLUMN_NAME_TIME + " ASC";
 
-  public BackgroundLocation getLocationById(long id) {
-    String[] columns = LocationEntry.PROJECTION_ALL;
-    String whereClause = LocationEntry._ID + " = ?";
-    String[] whereArgs = { String.valueOf(id) };
-
-    BackgroundLocation location = null;
-    Cursor cursor = null;
-    try {
-      cursor = db.query(
-              LocationEntry.TABLE_NAME,  // The table to query
-              columns,                   // The columns to return
-              whereClause,               // The columns for the WHERE clause
-              whereArgs,                 // The values for the WHERE clause
-              null,              // don't group the rows
-              null,               // don't filter by row groups
-              null               // The sort order
-      );
-      while (cursor.moveToNext()) {
-        location = hydrate(cursor);
-        if (!cursor.isLast()) {
-          throw new RuntimeException("Location " + id + " is not unique");
+        try (Cursor cursor = db.query(
+                LocationEntry.TABLE_NAME,
+                LocationEntry.PROJECTION_ALL,
+                whereClause,
+                whereArgs,
+                null,
+                null,
+                orderBy
+        )) {
+            if (cursor != null) {
+                while (cursor.moveToNext()) {
+                    locations.add(hydrate(cursor));
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to compile location records array from storage layer query.", e);
         }
-      }
-    } finally {
-      if (cursor != null) {
-        cursor.close();
-      }
+
+        return locations;
     }
 
-    return location;
-  }
+    @Override
+    public Collection<BackgroundLocation> getAllLocations() {
+        return getLocations(null, null);
+    }
 
-  public BackgroundLocation getFirstUnpostedLocation() {
-    String[] columns = LocationEntry.PROJECTION_ALL;
-    String whereClause = LocationEntry.COLUMN_NAME_STATUS + " = ?";
-    String[] whereArgs = { String.valueOf(BackgroundLocation.POST_PENDING) };
-    String orderBy = LocationEntry.COLUMN_NAME_TIME + " ASC";
-    String limit = "1";
+    @Override
+    public Collection<BackgroundLocation> getValidLocations() {
+        String whereClause = LocationEntry.COLUMN_NAME_STATUS + " <> ?";
+        String[] whereArgs = { String.valueOf(BackgroundLocation.DELETED) };
+        return getLocations(whereClause, whereArgs);
+    }
 
-    BackgroundLocation location = null;
-    Cursor cursor = null;
-    try {
-        cursor = db.query(LocationEntry.TABLE_NAME, columns, whereClause, whereArgs, null, null, orderBy, limit);
-        if (cursor.moveToFirst()) {
-          location = hydrate(cursor); 
+    @Override
+    public BackgroundLocation getLocationById(long id) {
+        String whereClause = LocationEntry._ID + " = ?";
+        String[] whereArgs = { String.valueOf(id) };
+        BackgroundLocation location = null;
+
+        try (Cursor cursor = db.query(
+                LocationEntry.TABLE_NAME,
+                LocationEntry.PROJECTION_ALL,
+                whereClause,
+                whereArgs,
+                null,
+                null,
+                null
+        )) {
+            if (cursor != null && cursor.moveToNext()) {
+                location = hydrate(cursor);
+                if (!cursor.isLast()) {
+                    throw new RuntimeException("Data integrity fault: Target coordinate identifier [" + id + "] is not unique.");
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error performing single identifier row profile isolation lookup.", e);
         }
-    } finally {
-      if (cursor != null) cursor.close();
+
+        return location;
     }
-    
-    return location;
-  }
 
-  public BackgroundLocation getNextUnpostedLocation(long fromId) {
-    SqlSelectStatement subsql = new SqlSelectStatement();
-    subsql.column(new SqlExpression(String.format("MIN(%s)", LocationEntry._ID)), LocationEntry._ID);
-    subsql.from(LocationEntry.TABLE_NAME);
-    subsql.where(LocationEntry.COLUMN_NAME_STATUS, SqlExpression.SqlOperatorEqualTo, BackgroundLocation.POST_PENDING);
-    subsql.where(LocationEntry._ID, SqlExpression.SqlOperatorNotEqualTo, fromId);
-    subsql.orderBy(LocationEntry.COLUMN_NAME_TIME);
+    @Override
+    public BackgroundLocation getFirstUnpostedLocation() {
+        String whereClause = LocationEntry.COLUMN_NAME_STATUS + " = ?";
+        String[] whereArgs = { String.valueOf(BackgroundLocation.POST_PENDING) };
+        String orderBy = LocationEntry.COLUMN_NAME_TIME + " ASC";
+        String limit = "1";
 
-    SqlSelectStatement sql = new SqlSelectStatement();
-    sql.columns(LocationEntry.PROJECTION_ALL);
-    sql.from(LocationEntry.TABLE_NAME);
-    sql.where(LocationEntry._ID, SqlExpression.SqlOperatorEqualTo, subsql);
-
-    BackgroundLocation location = null;
-    Cursor cursor = null;
-    try {
-      cursor = db.rawQuery(sql.statement(), new String[]{});
-      while (cursor.moveToNext()) {
-        location = hydrate(cursor);
-        if (!cursor.isLast()) {
-          throw new RuntimeException("Expected single location");
+        BackgroundLocation location = null;
+        try (Cursor cursor = db.query(
+                LocationEntry.TABLE_NAME,
+                LocationEntry.PROJECTION_ALL,
+                whereClause,
+                whereArgs,
+                null,
+                null,
+                orderBy,
+                limit
+        )) {
+            if (cursor != null && cursor.moveToFirst()) {
+                location = hydrate(cursor);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error extracting queue extraction head tracking point.", e);
         }
-      }
-    } finally {
-      if (cursor != null) {
-        cursor.close();
-      }
+        
+        return location;
     }
 
-    return location;
-  }
+    @Override
+    public BackgroundLocation getNextUnpostedLocation(long fromId) {
+        String whereClause = LocationEntry.COLUMN_NAME_STATUS + " = ? AND " + LocationEntry._ID + " <> ?";
+        String[] whereArgs = { String.valueOf(BackgroundLocation.POST_PENDING), String.valueOf(fromId) };
+        String orderBy = LocationEntry.COLUMN_NAME_TIME + " ASC";
+        String limit = "1";
 
-  public long getUnpostedLocationsCount() {
-    String whereClause = SQLiteLocationContract.LocationEntry.COLUMN_NAME_STATUS + " = ?";
-    String[] whereArgs = { String.valueOf(BackgroundLocation.POST_PENDING) };
+        BackgroundLocation location = null;
+        try (Cursor cursor = db.query(
+                LocationEntry.TABLE_NAME,
+                LocationEntry.PROJECTION_ALL,
+                whereClause,
+                whereArgs,
+                null,
+                null,
+                orderBy,
+                limit
+        )) {
+            if (cursor != null && cursor.moveToFirst()) {
+                location = hydrate(cursor);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed resolving sequential processing item target from queue bounds.", e);
+        }
 
-    return DatabaseUtils.queryNumEntries(db, LocationEntry.TABLE_NAME, whereClause, whereArgs);
-  }
+        return location;
+    }
 
-  public long getLocationsForSyncCount(long millisSinceLastBatch) {
-    String whereClause = TextUtils.join("", new String[]{
-            SQLiteLocationContract.LocationEntry.COLUMN_NAME_STATUS + " = ? AND ( ",
-            SQLiteLocationContract.LocationEntry.COLUMN_NAME_BATCH_START_MILLIS + " IS NULL OR ",
-            SQLiteLocationContract.LocationEntry.COLUMN_NAME_BATCH_START_MILLIS + " < ? )",
-    });
-    String[] whereArgs = {
-            String.valueOf(BackgroundLocation.SYNC_PENDING),
-            String.valueOf(millisSinceLastBatch)
-    };
+    @Override
+    public long getUnpostedLocationsCount() {
+        String whereClause = LocationEntry.COLUMN_NAME_STATUS + " = ?";
+        String[] whereArgs = { String.valueOf(BackgroundLocation.POST_PENDING) };
+        return DatabaseUtils.queryNumEntries(db, LocationEntry.TABLE_NAME, whereClause, whereArgs);
+    }
 
-    return DatabaseUtils.queryNumEntries(db, LocationEntry.TABLE_NAME, whereClause, whereArgs);
-  }
+    @Override
+    public long getLocationsForSyncCount(long millisSinceLastBatch) {
+        String whereClause = LocationEntry.COLUMN_NAME_STATUS + " = ? AND ( " +
+                LocationEntry.COLUMN_NAME_BATCH_START_MILLIS + " IS NULL OR " +
+                LocationEntry.COLUMN_NAME_BATCH_START_MILLIS + " < ? )";
+        
+        String[] whereArgs = {
+                String.valueOf(BackgroundLocation.SYNC_PENDING),
+                String.valueOf(millisSinceLastBatch)
+        };
 
-  /**
-   * Persist location into database
-   *
-   * @param location
-   * @return rowId or -1 when error occured
-   */
-  public long persistLocation(BackgroundLocation location) {
-    ContentValues values = getContentValues(location);
-    long rowId = db.insertOrThrow(LocationEntry.TABLE_NAME, LocationEntry.COLUMN_NAME_NULLABLE, values);
+        return DatabaseUtils.queryNumEntries(db, LocationEntry.TABLE_NAME, whereClause, whereArgs);
+    }
 
-    return rowId;
-  }
+    @Override
+    public long persistLocation(BackgroundLocation location) {
+        if (location == null) return -1;
+        ContentValues values = getContentValues(location);
+        return db.insertOrThrow(LocationEntry.TABLE_NAME, LocationEntry.COLUMN_NAME_NULLABLE, values);
+    }
 
-  /**
-   * Persist location into database with maximum row limit
-   *
-   * Method will ensure that there will be no more records than maxRows.
-   * Instead old records will be replaced with newer ones.
-   * If maxRows will change in time, method will delete excess records and vacuum table.
-   *
-   * @param location
-   * @param maxRows
-   * @return rowId or -1 when error occured
-   */
-  public long persistLocation(BackgroundLocation location, int maxRows) {
-    if (maxRows == 0) return -1;
+    @Override
+    public long persistLocation(BackgroundLocation location, int maxRows) {
+        if (maxRows <= 0) return -1;
 
         long rowCount = DatabaseUtils.queryNumEntries(db, LocationEntry.TABLE_NAME);
-
         if (rowCount < maxRows) {
-            return persistLocation(location); 
+            return persistLocation(location);
         }
 
         db.beginTransactionNonExclusive();
@@ -222,232 +216,179 @@ public class SQLiteLocationDAO implements LocationDAO {
             String deleteSql = "DELETE FROM " + LocationEntry.TABLE_NAME +
                     " WHERE " + LocationEntry._ID + " IN " +
                     "(SELECT " + LocationEntry._ID + " FROM " + LocationEntry.TABLE_NAME +
-                    " ORDER BY " + LocationEntry.COLUMN_NAME_TIME + " ASC " +
-                    " LIMIT ?)";
+                    " ORDER BY " + LocationEntry.COLUMN_NAME_TIME + " ASC LIMIT ?)";
             
-            
-            long excess = (rowCount - maxRows) + 1; 
+            long excess = (rowCount - maxRows) + 1;
             db.execSQL(deleteSql, new Object[]{excess});
 
             ContentValues values = getContentValues(location);
             newRowId = db.insertOrThrow(LocationEntry.TABLE_NAME, LocationEntry.COLUMN_NAME_NULLABLE, values);
 
             db.setTransactionSuccessful();
+        } catch (Exception e) {
+            Log.e(TAG, "Atomic database cleanup pruning/insertion transaction failed.", e);
         } finally {
             db.endTransaction();
         }
         
         return newRowId;
-  }
-
-  /**
-   * Delete location by given locationId
-   *
-   * Note: location is not actually deleted only flagged as non valid
-   * @param locationId
-   */
-  public void deleteLocationById(long locationId) {
-    if (locationId < 0) {
-      return;
     }
 
-    ContentValues values = new ContentValues();
-    values.put(LocationEntry.COLUMN_NAME_STATUS, BackgroundLocation.DELETED);
+    @Override
+    public void deleteLocationById(long locationId) {
+        if (locationId < 0) return;
 
-    String whereClause = LocationEntry._ID + " = ?";
-    String[] whereArgs = { String.valueOf(locationId) };
+        ContentValues values = new ContentValues();
+        values.put(LocationEntry.COLUMN_NAME_STATUS, BackgroundLocation.DELETED);
 
-    db.update(LocationEntry.TABLE_NAME, values, whereClause, whereArgs);
-  }
+        String whereClause = LocationEntry._ID + " = ?";
+        String[] whereArgs = { String.valueOf(locationId) };
 
-  public BackgroundLocation deleteFirstUnpostedLocation() {
-    BackgroundLocation location = getFirstUnpostedLocation();
-    deleteLocationById(location.getLocationId());
-
-    return location;
-  }
-
-  public long persistLocationForSync(BackgroundLocation location, int maxRows) {
-    Long locationId = location.getLocationId();
-
-    if (locationId == null) {
-      location.setStatus(BackgroundLocation.SYNC_PENDING);
-      return persistLocation(location, maxRows);
-    } else {
-      ContentValues values = new ContentValues();
-      values.put(LocationEntry.COLUMN_NAME_STATUS, BackgroundLocation.SYNC_PENDING);
-
-      String whereClause = LocationEntry._ID + " = ?";
-      String[] whereArgs = { String.valueOf(locationId) };
-
-      db.update(LocationEntry.TABLE_NAME, values, whereClause, whereArgs);
-      return locationId;
-    }
-  }
-
-  public void updateLocationForSync(long locationId) {
-    ContentValues values = new ContentValues();
-    values.put(LocationEntry.COLUMN_NAME_STATUS, BackgroundLocation.SYNC_PENDING);
-
-    String whereClause = LocationEntry._ID + " = ?";
-    String[] whereArgs = { String.valueOf(locationId) };
-
-    db.update(LocationEntry.TABLE_NAME, values, whereClause, whereArgs);
-  }
-
-  /**
-   * Delete all locations before the given timestamp
-   *
-   */
-  public int deleteAllLocationsPermanent(long millisBeforeTimeStamp) {
-    if(millisBeforeTimeStamp < 0){
-      return 0;
+        db.update(LocationEntry.TABLE_NAME, values, whereClause, whereArgs);
     }
 
-    String whereClause = TextUtils.join("", new String[]{
-            LocationEntry.COLUMN_NAME_REALTIME + " < ?",
-    });
-    String[] whereArgs = {
-            String.valueOf(millisBeforeTimeStamp)
-    };
-    return db.delete(LocationEntry.TABLE_NAME,  whereClause, whereArgs);
-  }
+    @Override
+    public BackgroundLocation deleteFirstUnpostedLocation() {
+        BackgroundLocation location = getFirstUnpostedLocation();
+        if (location != null) {
+            deleteLocationById(location.getLocationId());
+        }
+        return location;
+    }
 
-  /**
-   * Delete all locations
-   *
-   * Note: location are not actually deleted only flagged as non valid
-   */
-  public int deleteAllLocations() {
-    ContentValues values = new ContentValues();
-    values.put(LocationEntry.COLUMN_NAME_STATUS, BackgroundLocation.DELETED);
-    return db.update(LocationEntry.TABLE_NAME, values, null, null);
-  }
+    @Override
+    public long persistLocationForSync(BackgroundLocation location, int maxRows) {
+        if (location == null) return -1;
+        Long locationId = location.getLocationId();
 
-  /**
-   * Delete all locations that are in post location queue
-   *
-   * Note: Instead of deleting, location status is changed so they can be still synced
-   */
-  public int deleteUnpostedLocations() {
-    ContentValues values = new ContentValues();
-    values.put(LocationEntry.COLUMN_NAME_STATUS, BackgroundLocation.SYNC_PENDING);
+        if (locationId == null) {
+            location.setStatus(BackgroundLocation.SYNC_PENDING);
+            return persistLocation(location, maxRows);
+        } else {
+            updateLocationForSync(locationId);
+            return locationId;
+        }
+    }
 
-    String whereClause = LocationEntry.COLUMN_NAME_STATUS + " = ?";
-    String[] whereArgs = { String.valueOf(BackgroundLocation.POST_PENDING) };
+    @Override
+    public void updateLocationForSync(long locationId) {
+        ContentValues values = new ContentValues();
+        values.put(LocationEntry.COLUMN_NAME_STATUS, BackgroundLocation.SYNC_PENDING);
 
-    return db.update(LocationEntry.TABLE_NAME, values, whereClause, whereArgs);
-  }
+        String whereClause = LocationEntry._ID + " = ?";
+        String[] whereArgs = { String.valueOf(locationId) };
 
-  private BackgroundLocation hydrate(Cursor c) {
-    
-    BackgroundLocation l = new BackgroundLocation(c.getString(14));
-    l.setTime(c.getLong(2));
-    if (c.getInt(9) == 1) l.setAccuracy(c.getFloat(2));
-    if (c.getInt(10) == 1) l.setSpeed(c.getFloat(3));
-    if (c.getInt(11) == 1) l.setBearing(c.getFloat(4));
-    if (c.getInt(12) == 1) l.setAltitude(c.getDouble(5));
-    if (c.getInt(13) == 1) l.setRadius(c.getFloat(8));
-    l.setLatitude(c.getDouble(6));
-    l.setLongitude(c.getDouble(7));
-    l.setLocationProvider(c.getInt(15));
-    l.setStatus(c.getInt(16));
-    l.setBatchStartMillis(c.getLong(17));
-    l.setLocationId(c.getLong(0));
-    l.setMockFlags(c.getInt((18)));
-    l.setBatteryLevel(c.getInt((19)));
-    l.setIsCharging(c.getInt((20)) == 1);
-    l.setRealTime(c.getInt(21));
-    l.setElapsedRealtimeNanos(22);
-    
+        db.update(LocationEntry.TABLE_NAME, values, whereClause, whereArgs);
+    }
 
-    // BackgroundLocation l = new BackgroundLocation(c.getString(c.getColumnIndex(LocationEntry.COLUMN_NAME_PROVIDER)));
-    // l.setTime(c.getLong(c.getColumnIndex(LocationEntry.COLUMN_NAME_TIME)));
-    // if (c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_HAS_ACCURACY)) == 1) {
-    //   l.setAccuracy(c.getFloat(c.getColumnIndex(LocationEntry.COLUMN_NAME_ACCURACY)));
-    // }
+    @Override
+    public int deleteAllLocationsPermanent(long millisBeforeTimeStamp) {
+        if (millisBeforeTimeStamp < 0) return 0;
 
-    // if (c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_HAS_SPEED)) == 1) {
-    //   l.setSpeed(c.getFloat(c.getColumnIndex(LocationEntry.COLUMN_NAME_SPEED)));
-    // }
+        String whereClause = LocationEntry.COLUMN_NAME_REALTIME + " < ?";
+        String[] whereArgs = { String.valueOf(millisBeforeTimeStamp) };
+        return db.delete(LocationEntry.TABLE_NAME, whereClause, whereArgs);
+    }
 
-    // if (c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_HAS_BEARING)) == 1) {
-    //   l.setBearing(c.getFloat(c.getColumnIndex(LocationEntry.COLUMN_NAME_BEARING)));
-    // }
+    @Override
+    public int deleteAllLocations() {
+        ContentValues values = new ContentValues();
+        values.put(LocationEntry.COLUMN_NAME_STATUS, BackgroundLocation.DELETED);
+        return db.update(LocationEntry.TABLE_NAME, values, null, null);
+    }
 
-    // if (c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_HAS_ALTITUDE)) == 1) {
-    //   l.setAltitude(c.getDouble(c.getColumnIndex(LocationEntry.COLUMN_NAME_ALTITUDE)));
-    // }
+    @Override
+    public int deleteUnpostedLocations() {
+        ContentValues values = new ContentValues();
+        values.put(LocationEntry.COLUMN_NAME_STATUS, BackgroundLocation.SYNC_PENDING);
 
-    // if (c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_HAS_RADIUS)) == 1) {
-    //   l.setRadius(c.getFloat(c.getColumnIndex(LocationEntry.COLUMN_NAME_RADIUS)));
-    // }
+        String whereClause = LocationEntry.COLUMN_NAME_STATUS + " = ?";
+        String[] whereArgs = { String.valueOf(BackgroundLocation.POST_PENDING) };
 
-    // l.setLatitude(c.getDouble(c.getColumnIndex(LocationEntry.COLUMN_NAME_LATITUDE)));
-    // l.setLongitude(c.getDouble(c.getColumnIndex(LocationEntry.COLUMN_NAME_LONGITUDE)));
-    // l.setLocationProvider(c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_LOCATION_PROVIDER)));
-    // l.setBatchStartMillis(c.getLong(c.getColumnIndex(LocationEntry.COLUMN_NAME_BATCH_START_MILLIS)));
-    // l.setStatus(c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_STATUS)));
-    // l.setLocationId(c.getLong(c.getColumnIndex(LocationEntry._ID)));
-    // l.setMockFlags(c.getInt((c.getColumnIndex(LocationEntry.COLUMN_NAME_MOCK_FLAGS))));
-    // l.setBatteryLevel(c.getInt((c.getColumnIndex(LocationEntry.COLUMN_NAME_BATTERY_LEVEL))));
-    // l.setIsCharging(c.getInt((c.getColumnIndex(LocationEntry.COLUMN_NAME_CHARGING_FLAG))) == 1);
-    // l.setRealTime(c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_REALTIME)));
-    // l.setElapsedRealtimeNanos(c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_ELAPSEDREALTIMENANO)));
+        return db.update(LocationEntry.TABLE_NAME, values, whereClause, whereArgs);
+    }
 
-    return l;
-  }
 
-  private ContentValues getContentValues(BackgroundLocation l) {
-    ContentValues values = new ContentValues();
-    values.put(LocationEntry.COLUMN_NAME_PROVIDER, l.getProvider());
-    values.put(LocationEntry.COLUMN_NAME_TIME, l.getTime());
-    values.put(LocationEntry.COLUMN_NAME_ACCURACY, l.getAccuracy());
-    values.put(LocationEntry.COLUMN_NAME_SPEED, l.getSpeed());
-    values.put(LocationEntry.COLUMN_NAME_BEARING, l.getBearing());
-    values.put(LocationEntry.COLUMN_NAME_ALTITUDE, l.getAltitude());
-    values.put(LocationEntry.COLUMN_NAME_RADIUS, l.getRadius());
-    values.put(LocationEntry.COLUMN_NAME_LATITUDE, l.getLatitude());
-    values.put(LocationEntry.COLUMN_NAME_LONGITUDE, l.getLongitude());
-    values.put(LocationEntry.COLUMN_NAME_HAS_ACCURACY, l.hasAccuracy() ? 1 : 0);
-    values.put(LocationEntry.COLUMN_NAME_HAS_SPEED, l.hasSpeed() ? 1 : 0);
-    values.put(LocationEntry.COLUMN_NAME_HAS_BEARING, l.hasBearing() ? 1 : 0);
-    values.put(LocationEntry.COLUMN_NAME_HAS_ALTITUDE, l.hasAltitude() ? 1 : 0);
-    values.put(LocationEntry.COLUMN_NAME_HAS_RADIUS, l.hasRadius() ? 1 : 0);
-    values.put(LocationEntry.COLUMN_NAME_LOCATION_PROVIDER, l.getLocationProvider());
-    values.put(LocationEntry.COLUMN_NAME_STATUS, l.getStatus());
-    values.put(LocationEntry.COLUMN_NAME_BATCH_START_MILLIS, l.getBatchStartMillis());
-    values.put(LocationEntry.COLUMN_NAME_MOCK_FLAGS, l.getMockFlags());
-    values.put(LocationEntry.COLUMN_NAME_BATTERY_LEVEL, l.getBatteryLevel());
-    values.put(LocationEntry.COLUMN_NAME_CHARGING_FLAG, l.getIsCharging() ? 1 : 0);
-    values.put(LocationEntry.COLUMN_NAME_REALTIME, l.getRealTime());
-    values.put(LocationEntry.COLUMN_NAME_ELAPSEDREALTIMENANO, l.getElapsedRealtimeNanos());
-
-    return values;
-  }
-
-  public BackgroundLocation getValidLatestLocation() {
-    String[] columns = LocationEntry.PROJECTION_ALL; 
+    private BackgroundLocation hydrate(Cursor c) {
+        BackgroundLocation l = new BackgroundLocation(c.getString(INDEX_PROVIDER));
         
-    String whereClause = LocationEntry.COLUMN_NAME_STATUS + " <> ?";
-    String[] whereArgs = { String.valueOf(BackgroundLocation.DELETED) };
+        l.setLocationId(c.getLong(INDEX_ID));
+        l.setTime(c.getLong(INDEX_TIME));
         
-    String orderBy = LocationEntry.COLUMN_NAME_TIME + " DESC";
-    String limit = "1";
+        if (c.getInt(INDEX_HAS_ACCURACY) == 1) l.setAccuracy(c.getFloat(INDEX_ACCURACY));
+        if (c.getInt(INDEX_HAS_SPEED) == 1) l.setSpeed(c.getFloat(INDEX_SPEED));
+        if (c.getInt(INDEX_HAS_BEARING) == 1) l.setBearing(c.getFloat(INDEX_BEARING));
+        if (c.getInt(INDEX_HAS_ALTITUDE) == 1) l.setAltitude(c.getDouble(INDEX_ALTITUDE));
+        if (c.getInt(INDEX_HAS_RADIUS) == 1) l.setRadius(c.getFloat(INDEX_RADIUS));
+        
+        l.setLatitude(c.getDouble(INDEX_LATITUDE));
+        l.setLongitude(c.getDouble(INDEX_LONGITUDE));
+        l.setLocationProvider(c.getInt(INDEX_LOCATION_PROVIDER));
+        l.setStatus(c.getInt(INDEX_STATUS));
+        l.setBatchStartMillis(c.getLong(INDEX_BATCH_START_MILLIS));
+        l.setMockFlags(c.getInt(INDEX_MOCK_FLAGS));
+        l.setBatteryLevel(c.getInt(INDEX_BATTERY_LEVEL));
+        l.setIsCharging(c.getInt(INDEX_CHARGING_FLAG) == 1);
+        l.setRealTime(c.getLong(INDEX_REALTIME));
+        
+        l.setElapsedRealtimeNanos(c.getLong(INDEX_ELAPSEDREALTIMENANO));
 
-    BackgroundLocation location = null;
-    Cursor cursor = null;
-    try {
-      cursor = db.query(LocationEntry.TABLE_NAME, columns, whereClause, whereArgs, null, null, orderBy, limit);
-      if (cursor.moveToFirst()) {
-        location = hydrate(cursor);
-      }
-    } catch (Exception e) {
-      Log.e("SQLiteLocationDAO", "Failed to retrieve latest valid location", e);
-    } finally {
-      if (cursor != null) cursor.close();
+        return l;
     }
 
-    return location;
-  }
+    private ContentValues getContentValues(BackgroundLocation l) {
+        ContentValues values = new ContentValues();
+        values.put(LocationEntry.COLUMN_NAME_PROVIDER, l.getProvider());
+        values.put(LocationEntry.COLUMN_NAME_TIME, l.getTime());
+        values.put(LocationEntry.COLUMN_NAME_ACCURACY, l.getAccuracy());
+        values.put(LocationEntry.COLUMN_NAME_SPEED, l.getSpeed());
+        values.put(LocationEntry.COLUMN_NAME_BEARING, l.getBearing());
+        values.put(LocationEntry.COLUMN_NAME_ALTITUDE, l.getAltitude());
+        values.put(LocationEntry.COLUMN_NAME_RADIUS, l.getRadius());
+        values.put(LocationEntry.COLUMN_NAME_LATITUDE, l.getLatitude());
+        values.put(LocationEntry.COLUMN_NAME_LONGITUDE, l.getLongitude());
+        values.put(LocationEntry.COLUMN_NAME_HAS_ACCURACY, l.hasAccuracy() ? 1 : 0);
+        values.put(LocationEntry.COLUMN_NAME_HAS_SPEED, l.hasSpeed() ? 1 : 0);
+        values.put(LocationEntry.COLUMN_NAME_HAS_BEARING, l.hasBearing() ? 1 : 0);
+        values.put(LocationEntry.COLUMN_NAME_HAS_ALTITUDE, l.hasAltitude() ? 1 : 0);
+        values.put(LocationEntry.COLUMN_NAME_HAS_RADIUS, l.hasRadius() ? 1 : 0);
+        values.put(LocationEntry.COLUMN_NAME_LOCATION_PROVIDER, l.getLocationProvider());
+        values.put(LocationEntry.COLUMN_NAME_STATUS, l.getStatus());
+        values.put(LocationEntry.COLUMN_NAME_BATCH_START_MILLIS, l.getBatchStartMillis());
+        values.put(LocationEntry.COLUMN_NAME_MOCK_FLAGS, l.getMockFlags());
+        values.put(LocationEntry.COLUMN_NAME_BATTERY_LEVEL, l.getBatteryLevel());
+        values.put(LocationEntry.COLUMN_NAME_CHARGING_FLAG, l.getIsCharging() ? 1 : 0);
+        values.put(LocationEntry.COLUMN_NAME_REALTIME, l.getRealTime());
+        values.put(LocationEntry.COLUMN_NAME_ELAPSEDREALTIMENANO, l.getElapsedRealtimeNanos());
+
+        return values;
+    }
+
+    @Override
+    public BackgroundLocation getValidLatestLocation() {
+        String whereClause = LocationEntry.COLUMN_NAME_STATUS + " <> ?";
+        String[] whereArgs = { String.valueOf(BackgroundLocation.DELETED) };
+        String orderBy = LocationEntry.COLUMN_NAME_TIME + " DESC";
+        String limit = "1";
+
+        BackgroundLocation location = null;
+        try (Cursor cursor = db.query(
+                LocationEntry.TABLE_NAME,
+                LocationEntry.PROJECTION_ALL,
+                whereClause,
+                whereArgs,
+                null,
+                null,
+                orderBy,
+                limit
+        )) {
+            if (cursor != null && cursor.moveToFirst()) {
+                location = hydrate(cursor);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to extract latest valid location record from database layer.", e);
+        }
+
+        return location;
+    }
 }

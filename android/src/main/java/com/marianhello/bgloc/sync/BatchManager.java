@@ -1,246 +1,358 @@
 package com.marianhello.bgloc.sync;
 
-import android.content.ContentProviderOperation;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
-import android.database.sqlite.SQLiteDatabase;
 import android.net.Uri;
 import android.text.TextUtils;
 import android.util.JsonWriter;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 import com.marianhello.bgloc.ResourceResolver;
-import com.marianhello.bgloc.data.AbstractLocationTemplate;
-import com.marianhello.bgloc.data.ArrayListLocationTemplate;
 import com.marianhello.bgloc.data.BackgroundLocation;
-import com.marianhello.bgloc.data.HashMapLocationTemplate;
 import com.marianhello.bgloc.data.LocationTemplate;
 import com.marianhello.bgloc.data.LocationTemplateFactory;
 import com.marianhello.bgloc.data.provider.LocationContentProvider;
-import com.marianhello.bgloc.data.sqlite.SQLiteLocationContract;
 import com.marianhello.bgloc.data.sqlite.SQLiteLocationContract.LocationEntry;
-import com.marianhello.bgloc.data.sqlite.SQLiteOpenHelper;
 import com.marianhello.logging.LoggerManager;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
-import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 
-/**
- * Created by finch on 20/07/16.
- */
-public class BatchManager {
-    private Context context;
-    private org.slf4j.Logger logger;
+public final class BatchManager {
 
-    public BatchManager(Context context) {
-        logger = LoggerManager.getLogger(BatchManager.class);
-        this.context = context;
+    private final Context context;
+    private final org.slf4j.Logger logger;
+
+    public BatchManager(@NonNull Context context) {
+        this.context = context.getApplicationContext();
+        this.logger = LoggerManager.getLogger(BatchManager.class);
     }
 
+    @NonNull
     private Uri getLocationContentUri() {
-        ResourceResolver resourceResolver = ResourceResolver.newInstance(context);
-        String authority = resourceResolver.getAuthority();
-        return LocationContentProvider.getContentUri(authority);
+        ResourceResolver resolver =
+                ResourceResolver.newInstance(context);
+
+        return LocationContentProvider.getContentUri(
+                resolver.getAuthority()
+        );
     }
 
-    private File createBatchFromTemplate(Long batchStartMillis, Integer syncThreshold, LocationTemplate template) throws IOException {
-        logger.info("Creating batch {}", batchStartMillis);
+    @Nullable
+    public File createBatch(
+            @NonNull Long batchStartMillis,
+            int syncThreshold,
+            @Nullable LocationTemplate template
+    ) throws IOException {
 
-        ContentResolver resolver = context.getContentResolver();
-        Uri contentUri = getLocationContentUri();
+        LocationTemplate effectiveTemplate =
+                template != null
+                        ? template
+                        : LocationTemplateFactory.getDefault();
 
-        String whereClause = TextUtils.join("", new String[]{
-                LocationEntry.COLUMN_NAME_STATUS + " = ? AND ( ",
-                LocationEntry.COLUMN_NAME_BATCH_START_MILLIS + " IS NULL OR ",
-                LocationEntry.COLUMN_NAME_BATCH_START_MILLIS + " < ? )",
-        });
-        String[] whereArgs = {
+        ContentResolver resolver =
+                context.getContentResolver();
+
+        Uri contentUri =
+                getLocationContentUri();
+
+        String selection =
+                LocationEntry.COLUMN_NAME_STATUS + " = ? AND (" +
+                        LocationEntry.COLUMN_NAME_BATCH_START_MILLIS +
+                        " IS NULL OR " +
+                        LocationEntry.COLUMN_NAME_BATCH_START_MILLIS +
+                        " < ?)";
+
+        String[] selectionArgs = {
                 String.valueOf(BackgroundLocation.SYNC_PENDING),
                 String.valueOf(batchStartMillis)
         };
 
-        Cursor cursor = null;
-        LocationWriter writer = null;
+        List<Long> ids = new ArrayList<>();
+        File batchFile = null;
 
-        try {
-            cursor = resolver.query(
-                    contentUri,
-                    null,
-                    whereClause,
-                    whereArgs,
-                    LocationEntry.COLUMN_NAME_TIME + " ASC"
+        try (Cursor cursor = resolver.query(
+                contentUri,
+                null,
+                selection,
+                selectionArgs,
+                LocationEntry.COLUMN_NAME_TIME + " ASC"
+        )) {
 
-            );
-
-            if (cursor.getCount() < syncThreshold) {
+            if (cursor == null) {
                 return null;
             }
 
-            File file = File.createTempFile("locations", ".json");
-            FileOutputStream fs = new FileOutputStream(file);
-            writer = new LocationWriter(fs, template);
+            /*
+             * 0 = sync immediately
+             * >0 = wait until threshold reached
+             */
+            if (syncThreshold > 0 &&
+                    cursor.getCount() < syncThreshold) {
 
-            writer.beginArray();
-            while (cursor.moveToNext()) {
-                BackgroundLocation location = BackgroundLocation.fromCursor(cursor);
-                writer.write(location);
+                logger.debug(
+                        "Skipping sync. Pending locations={} threshold={}",
+                        cursor.getCount(),
+                        syncThreshold
+                );
+
+                return null;
             }
 
-            writer.endArray();
-            writer.close();
-            fs.close();
+            batchFile = File.createTempFile(
+                    "locations_batch_",
+                    ".json",
+                    context.getCacheDir()
+            );
 
-            // set batchStartMillis for all synced locations
-            ContentValues values = new ContentValues();
-            values.put(LocationEntry.COLUMN_NAME_BATCH_START_MILLIS, batchStartMillis);
-            resolver.update(contentUri, values, whereClause, whereArgs);
+            try (
+                    FileOutputStream fos =
+                            new FileOutputStream(batchFile);
 
-            logger.info("Batch file: {} created successfully", file.getName());
+                    BufferedWriter bw =
+                            new BufferedWriter(
+                                    new OutputStreamWriter(
+                                            fos,
+                                            StandardCharsets.UTF_8
+                                    )
+                            );
 
-            return file;
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-            if (writer != null) {
-                writer.close();
-            }
-        }
-    }
+                    JsonWriter writer =
+                            new JsonWriter(bw)
+            ) {
 
-    public File createBatch(Long batchStartMillis, Integer syncThreshold, LocationTemplate template) throws IOException {
-        LocationTemplate tpl;
-        if (template != null) {
-            tpl = template;
-        } else {
-            tpl = LocationTemplateFactory.getDefault();
-        }
-        return createBatchFromTemplate(batchStartMillis, syncThreshold, tpl);
-    }
+                writer.beginArray();
 
-    public File createBatch(Long batchStartMillis, Integer syncThreshold) throws IOException {
-        return createBatch(batchStartMillis, syncThreshold, null);
-    }
+                int idIndex =
+                        cursor.getColumnIndexOrThrow(
+                                LocationEntry._ID
+                        );
 
+                while (cursor.moveToNext()) {
 
-    public void setBatchCompleted(Long batchId) {
-        ContentResolver resolver = context.getApplicationContext().getContentResolver();
-        Uri contentUri = getLocationContentUri();
+                    long rowId =
+                            cursor.getLong(idIndex);
 
-        String whereClause = LocationEntry.COLUMN_NAME_BATCH_START_MILLIS + " = ?";
-        String[] whereArgs = { String.valueOf(batchId) };
+                    ids.add(rowId);
 
-        ContentValues values = new ContentValues();
-        values.put(LocationEntry.COLUMN_NAME_STATUS, BackgroundLocation.DELETED);
-        resolver.update(contentUri, values, whereClause, whereArgs);
-    }
+                    BackgroundLocation location =
+                            BackgroundLocation.fromCursor(cursor);
 
-    private static class LocationTemplateWriter {
-        private BackgroundLocation location;
-        private JsonWriter writer;
+                    Object payload =
+                            effectiveTemplate.locationToJson(location);
 
-        public LocationTemplateWriter(JsonWriter writer, BackgroundLocation location) {
-            this.writer = writer;
-            this.location = location;
-        }
-
-        private void writeValue(Object value) throws IOException {
-            if (value instanceof String ) {
-                writer.value((String) value);
-            } else if (value instanceof Map) {
-                writeMap((Map) value);
-            } else if (value instanceof List) {
-                writeList((List) value);
-            } else if (Integer.class.isInstance(value)) {
-                writer.value((Integer) value);
-            } else if (Double.class.isInstance(value)) {
-                writer.value((Double) value);
-            } else if (Float.class.isInstance(value)) {
-                writer.value((Float) value);
-            } else if (Long.class.isInstance(value)) {
-                writer.value((Long) value);
-            } else if (Boolean.class.isInstance(value)) {
-                writer.value((Boolean) value);
-            } else if (value == JSONObject.NULL) {
-                writer.nullValue();
-            } else {
-                writer.value(String.valueOf(value));
-            }
-        }
-
-        public void writeMap(Map values) throws IOException {
-            writer.beginObject();
-            Iterator<?> it = values.entrySet().iterator();
-            while (it.hasNext()) {
-                Map.Entry<String, Object> pair = (Map.Entry) it.next();
-                String key = pair.getKey();
-                Object value = pair.getValue();
-                Object locationValue = null;
-                if (value instanceof String) {
-                    locationValue = location.getValueForKey((String)value);
+                    JsonWriterUtil.write(writer, payload);
                 }
-                writer.name(key);
-                writeValue(locationValue != null ? locationValue : value);
+
+                writer.endArray();
+                writer.flush();
             }
+
+            if (!ids.isEmpty()) {
+
+                String updateSelection =
+                        LocationEntry._ID +
+                                " IN (" +
+                                TextUtils.join(",", ids) +
+                                ")";
+
+                ContentValues values =
+                        new ContentValues();
+
+                values.put(
+                        LocationEntry.COLUMN_NAME_BATCH_START_MILLIS,
+                        batchStartMillis
+                );
+
+                resolver.update(
+                        contentUri,
+                        values,
+                        updateSelection,
+                        null
+                );
+            }
+
+            logger.info(
+                    "Created batch {} with {} locations",
+                    batchFile.getName(),
+                    ids.size()
+            );
+
+            return batchFile;
+
+        } catch (Exception e) {
+
+            if (batchFile != null &&
+                    batchFile.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                batchFile.delete();
+            }
+
+            throw new IOException(
+                    "Failed to create location batch",
+                    e
+            );
+        }
+    }
+
+    @Nullable
+    public File createBatch(
+            @NonNull Long batchStartMillis,
+            int syncThreshold
+    ) throws IOException {
+
+        return createBatch(
+                batchStartMillis,
+                syncThreshold,
+                null
+        );
+    }
+
+    public void setBatchCompleted(
+            @NonNull Long batchId
+    ) {
+
+        ContentResolver resolver =
+                context.getContentResolver();
+
+        Uri contentUri =
+                getLocationContentUri();
+
+        String selection =
+                LocationEntry.COLUMN_NAME_BATCH_START_MILLIS +
+                        " = ?";
+
+        String[] selectionArgs = {
+                String.valueOf(batchId)
+        };
+
+        ContentValues values =
+                new ContentValues();
+
+        values.put(
+                LocationEntry.COLUMN_NAME_STATUS,
+                BackgroundLocation.DELETED
+        );
+
+        resolver.update(
+                contentUri,
+                values,
+                selection,
+                selectionArgs
+        );
+    }
+
+    private static final class JsonWriterUtil {
+
+        private JsonWriterUtil() {
+            throw new AssertionError("No instances");
+        }
+
+        static void write(
+                @NonNull JsonWriter writer,
+                @Nullable Object value
+        ) throws IOException {
+
+            if (value == null ||
+                    value == JSONObject.NULL) {
+
+                writer.nullValue();
+                return;
+            }
+
+            if (value instanceof String) {
+                writer.value((String) value);
+                return;
+            }
+
+            if (value instanceof Number) {
+                writer.value((Number) value);
+                return;
+            }
+
+            if (value instanceof Boolean) {
+                writer.value((Boolean) value);
+                return;
+            }
+
+            if (value instanceof JSONObject) {
+                writeObject(writer, (JSONObject) value);
+                return;
+            }
+
+            if (value instanceof JSONArray) {
+                writeArray(writer, (JSONArray) value);
+                return;
+            }
+
+            writer.value(String.valueOf(value));
+        }
+
+        private static void writeObject(
+                @NonNull JsonWriter writer,
+                @NonNull JSONObject object
+        ) throws IOException {
+
+            writer.beginObject();
+
+            Iterator<String> keys = object.keys();
+
+            while (keys.hasNext()) {
+
+                String key = keys.next();
+
+                writer.name(key);
+
+                try {
+                    write(writer, object.get(key));
+                } catch (JSONException e) {
+                    throw new IOException(
+                            "Failed to read JSONObject",
+                            e
+                    );
+                }
+            }
+
             writer.endObject();
         }
 
-        public void writeList(List values) throws IOException {
+        private static void writeArray(
+                @NonNull JsonWriter writer,
+                @NonNull JSONArray array
+        ) throws IOException {
+
             writer.beginArray();
-            Iterator<?> it = values.iterator();
-            while (it.hasNext()) {
-                Object value = it.next();
-                Object locationValue = null;
-                if (value instanceof  String) {
-                    locationValue = location.getValueForKey((String) value);
+
+            try {
+
+                for (int i = 0; i < array.length(); i++) {
+                    write(writer, array.get(i));
                 }
-                writeValue(locationValue != null ? locationValue : value);
+
+            } catch (JSONException e) {
+
+                throw new IOException(
+                        "Failed to read JSONArray",
+                        e
+                );
             }
+
             writer.endArray();
-        }
-    }
-
-    private static class LocationWriter {
-        private JsonWriter writer = null;
-        private LocationTemplate template;
-
-        public LocationWriter(FileOutputStream fos, LocationTemplate template) throws IOException {
-            writer = new JsonWriter(new OutputStreamWriter(fos, "UTF-8"));
-            this.template = template;
-        }
-
-        public void beginArray() throws IOException {
-            writer.beginArray();
-        }
-
-        public void endArray() throws IOException {
-            writer.endArray();
-        }
-
-        public void close() throws IOException {
-            writer.close();
-        }
-
-        public void write(BackgroundLocation location) throws IOException {
-            LocationTemplateWriter writer = new LocationTemplateWriter(this.writer, location);
-            if (template instanceof HashMapLocationTemplate) {
-                HashMapLocationTemplate hashTemplate = (HashMapLocationTemplate) template;
-                writer.writeMap(hashTemplate.toMap());
-            } else if (template instanceof ArrayListLocationTemplate) {
-                ArrayListLocationTemplate listTemplate = (ArrayListLocationTemplate) template;
-                writer.writeList(listTemplate.toList());
-            }
         }
     }
 }

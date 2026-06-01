@@ -1,16 +1,19 @@
 package com.marianhello.bgloc.headless;
 
 import android.os.Bundle;
+import android.util.Log;
+import androidx.annotation.NonNull;
 
 import com.marianhello.bgloc.data.BackgroundLocation;
-
 import org.json.JSONException;
 
-public abstract class LocationTask extends Task {
-    protected BackgroundLocation mLocation;
 
-    public LocationTask(BackgroundLocation location) {
-        mLocation = location;
+public abstract class LocationTask extends Task {
+    private static final String TAG = "LocationTask";
+    private final BackgroundLocation mLocation;
+
+    public LocationTask(@NonNull BackgroundLocation location) {
+        this.mLocation = location;
     }
 
     @Override
@@ -28,6 +31,7 @@ public abstract class LocationTask extends Task {
         params.putLong("time", mLocation.getTime());
         params.putDouble("latitude", mLocation.getLatitude());
         params.putDouble("longitude", mLocation.getLongitude());
+        
         if (mLocation.hasAccuracy()) params.putFloat("accuracy", mLocation.getAccuracy());
         if (mLocation.hasSpeed()) params.putFloat("speed", mLocation.getSpeed());
         if (mLocation.hasAltitude()) params.putDouble("altitude", mLocation.getAltitude());
@@ -42,18 +46,20 @@ public abstract class LocationTask extends Task {
         return bundle;
     }
 
+    @NonNull
     @Override
     public String toString() {
-        if (mLocation == null) {
-            return null;
-        }
-
         try {
-            return mLocation.toJSONObject().toString();
+            if (mLocation.toJSONObject() != null) {
+                return mLocation.toJSONObject().toString();
+            }
         } catch (JSONException e) {
-            onError("Error processing params: " + e.getMessage());
+            onError("Fatal tracking point serialization failure: " + e.getMessage());
+            Log.e(TAG, "Failed to stringify current location instance to JSON representation.", e);
         }
 
-        return null;
+        return "{\"name\":\"" + getName() + "\",\"error\":\"Serialization failed\",\"lat\":" 
+                + mLocation.getLatitude() + ",\"lng\":" + mLocation.getLongitude() + ",\"time\":" 
+                + mLocation.getTime() + "}";
     }
 }

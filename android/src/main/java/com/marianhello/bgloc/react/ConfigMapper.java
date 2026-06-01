@@ -2,7 +2,6 @@ package com.marianhello.bgloc.react;
 
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.ReadableMap;
-import com.facebook.react.bridge.ReadableMapKeySetIterator;
 import com.facebook.react.bridge.ReadableType;
 import com.facebook.react.bridge.WritableMap;
 import com.iodine.start.ArrayUtil;
@@ -19,10 +18,6 @@ import org.json.JSONObject;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
-
-/**
- * Created by finch on 29.11.2016.
- */
 
 public class ConfigMapper {
     public static Config fromMap(ReadableMap options) throws JSONException {

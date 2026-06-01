@@ -1,6 +1,10 @@
 package com.marianhello.bgloc;
 
 import android.os.Build;
+import android.util.Log;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -11,203 +15,171 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Iterator;
 
-import java.net.URL;
-import java.net.HttpURLConnection;
-import java.io.OutputStreamWriter;
+public final class HttpPostService {
+    private static final String TAG = "HttpPostService";
+    
+    public static final int BUFFER_SIZE = 8192; 
+    private static final int TIMEOUT_MS = 30000; 
 
-public class HttpPostService {
-    public static final int BUFFER_SIZE = 1024;
-
-    private String mUrl;
+    private final String mUrl;
     private HttpURLConnection mHttpURLConnection;
 
     public interface UploadingProgressListener {
         void onProgress(int progress);
     }
 
-    public HttpPostService(String url) {
-        mUrl = url;
+    public HttpPostService(@NonNull String url) {
+        this.mUrl = url;
     }
 
-    public HttpPostService(final HttpURLConnection httpURLConnection) {
-        mHttpURLConnection = httpURLConnection;
+    public HttpPostService(@NonNull HttpURLConnection httpURLConnection) {
+        this.mHttpURLConnection = httpURLConnection;
+        this.mUrl = httpURLConnection.getURL().toString();
     }
 
     private HttpURLConnection openConnection() throws IOException {
         if (mHttpURLConnection == null) {
             mHttpURLConnection = (HttpURLConnection) new URL(mUrl).openConnection();
+            mHttpURLConnection.setConnectTimeout(TIMEOUT_MS);
+            mHttpURLConnection.setReadTimeout(TIMEOUT_MS);
         }
         return mHttpURLConnection;
     }
 
-    private void consumeAndCloseStreams(HttpURLConnection conn) {
-        InputStream is = null;
-        try {
-            is = conn.getInputStream();
+  
+    private static void consumeAndCloseStreams(@NonNull HttpURLConnection conn) {
+        try (InputStream is = conn.getInputStream()) {
             if (is != null) {
-                while (is.read() != -1) {
-                    
+                byte[] discardBuffer = new byte[BUFFER_SIZE];
+                while (is.read(discardBuffer) != -1) {
+                    // Implicitly draining response bytes cleanly to EOF
                 }
             }
         } catch (IOException e) {
-           
-            InputStream es = conn.getErrorStream();
-            if (es != null) {
-                try {
-                    while (es.read() != -1) {
-                        
+            try (InputStream es = conn.getErrorStream()) {
+                if (es != null) {
+                    byte[] discardBuffer = new byte[BUFFER_SIZE];
+                    while (es.read(discardBuffer) != -1) {
+                        // Consuming error body metrics
                     }
-                } catch (IOException ex) {
-                } finally {
-                    try { es.close(); } catch (IOException ignored) {}
                 }
-            }
+            } catch (IOException ignored) {}
         } finally {
-            if (is != null) {
-                try { is.close(); } catch (IOException ignored) {}
-            }
+            conn.disconnect();
         }
     }
 
-    public int postJSON(JSONObject json, Map headers) throws IOException {
-        String jsonString = "null";
-        if (json != null) {
-            jsonString = json.toString();
-        }
-
-        return postJSONString(jsonString, headers);
+    public int postJSON(@Nullable JSONObject json, @Nullable Map<String, String> headers) throws IOException {
+        return postJSONString(json != null ? json.toString() : "{}", headers);
     }
 
-    public int postJSON(JSONArray json, Map headers) throws IOException {
-        String jsonString = "null";
-        if (json != null) {
-            jsonString = json.toString();
-        }
-
-        return postJSONString(jsonString, headers);
+    public int postJSON(@Nullable JSONArray json, @Nullable Map<String, String> headers) throws IOException {
+        return postJSONString(json != null ? json.toString() : "[]", headers);
     }
 
-    public int postJSONString(String body, Map<String, String> headers) throws IOException {
-        if (headers == null) {
-            headers = new HashMap();
-        }
-
+    public int postJSONString(@NonNull String body, @Nullable Map<String, String> headers) throws IOException {
+        Map<String, String> safeHeaders = (headers != null) ? headers : new HashMap<>();
         HttpURLConnection conn = this.openConnection();
-        conn.setConnectTimeout(15000); // 15 seconds
-        conn.setReadTimeout(15000);    // 15 seconds
 
-        byte[] postData = body.getBytes("UTF-8");
+        byte[] postData = body.getBytes(StandardCharsets.UTF_8);
 
         conn.setDoOutput(true);
         conn.setFixedLengthStreamingMode(postData.length);
-        //conn.setFixedLengthStreamingMode(body.length());
         conn.setRequestMethod("POST");
-        //conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
 
-        // Iterator<Map.Entry<String, String>> it = headers.entrySet().iterator();
-        // while (it.hasNext()) {
-        //     Map.Entry<String, String> pair = it.next();
-        //     conn.setRequestProperty(pair.getKey(), pair.getValue());
-        // }
+        for (Map.Entry<String, String> entry : safeHeaders.entrySet()) {
+            conn.setRequestProperty(entry.getKey(), entry.getValue());
+        }
 
-        headers.forEach(conn::setRequestProperty);
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(postData);
+            os.flush();
+        }
 
-        OutputStreamWriter os = null;
         try {
-            // os = new OutputStreamWriter(conn.getOutputStream());
-            // os.write(body);
-            os = new OutputStreamWriter(conn.getOutputStream(), "UTF-8");
-            os.write(body);
-
+            int responseCode = conn.getResponseCode();
+            consumeAndCloseStreams(conn);
+            return responseCode;
         } finally {
-            if (os != null) {
-                os.flush();
-                os.close();
-            }
+            mHttpURLConnection = null; 
         }
-
-        //return conn.getResponseCode();
-
-        int responseCode = conn.getResponseCode();
-        consumeAndCloseStreams(conn);
-
-        return responseCode;
     }
 
-    public int postJSONFile(File file, Map headers, UploadingProgressListener listener) throws IOException {
-        return postJSONFile(new FileInputStream(file), file.length(), headers, listener);
+    public int postJSONFile(@NonNull File file, @Nullable Map<String, String> headers, @Nullable UploadingProgressListener listener) throws IOException {
+        try (FileInputStream fis = new FileInputStream(file)) {
+            return postJSONFile(fis, file.length(), headers, listener);
+        }
     }
 
-    public int postJSONFile(InputStream stream, long size, Map headers, UploadingProgressListener listener) throws IOException {
-        if (headers == null) {
-            headers = new HashMap();
-        }
-
+    public int postJSONFile(@NonNull InputStream stream, long size, @Nullable Map<String, String> headers, @Nullable UploadingProgressListener listener) throws IOException {
+        Map<String, String> safeHeaders = (headers != null) ? headers : new HashMap<>();
         HttpURLConnection conn = this.openConnection();
 
-        conn.setDoInput(false);
+        conn.setDoInput(true);
         conn.setDoOutput(true);
+        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
             conn.setFixedLengthStreamingMode(size);
         } else {
-            conn.setChunkedStreamingMode(0);
+            conn.setChunkedStreamingMode(BUFFER_SIZE);
         }
+        
         conn.setRequestMethod("POST");
-        conn.setRequestProperty("Content-Type", "application/json");
-        Iterator<Map.Entry<String, String>> it = headers.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<String, String> pair = it.next();
-            conn.setRequestProperty(pair.getKey(), pair.getValue());
+        conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+
+        for (Map.Entry<String, String> entry : safeHeaders.entrySet()) {
+            conn.setRequestProperty(entry.getKey(), entry.getValue());
         }
 
-        long progress = 0;
-        int bytesRead = -1;
         byte[] buffer = new byte[BUFFER_SIZE];
+        long totalBytesWritten = 0;
+        int lastPercentage = -1;
 
-        BufferedInputStream is = null;
-        BufferedOutputStream os = null;
-        try {
-            is = new BufferedInputStream(stream);
-            os = new BufferedOutputStream(conn.getOutputStream());
-            while ((bytesRead = is.read(buffer)) != -1) {
-                os.write(buffer, 0, bytesRead);
-                os.flush();
-                progress += bytesRead;
-                int percentage = (int) ((progress * 100L) / size);
-                if (listener != null) {
-                    listener.onProgress(percentage);
+        try (BufferedInputStream bis = new BufferedInputStream(stream);
+             BufferedOutputStream bos = new BufferedOutputStream(conn.getOutputStream())) {
+            
+            int bytesRead;
+            while ((bytesRead = bis.read(buffer)) != -1) {
+                bos.write(buffer, 0, bytesRead);
+                totalBytesWritten += bytesRead;
+
+                if (size > 0 && listener != null) {
+                    int currentPercentage = (int) ((totalBytesWritten * 100L) / size);
+                    if (currentPercentage != lastPercentage) {
+                        lastPercentage = currentPercentage;
+                        listener.onProgress(currentPercentage);
+                    }
                 }
             }
-        } finally {
-            if (os != null) {
-                os.flush();
-                os.close();
-            }
-            if (is != null) {
-                is.close();
-            }
+            bos.flush(); 
         }
 
-        return conn.getResponseCode();
+        try {
+            int responseCode = conn.getResponseCode();
+            consumeAndCloseStreams(conn);
+            return responseCode;
+        } finally {
+            mHttpURLConnection = null;
+        }
     }
 
-    public static int postJSON(String url, JSONObject json, Map headers) throws IOException {
-        HttpPostService service = new HttpPostService(url);
-        return service.postJSON(json, headers);
+    public static int postJSON(@NonNull String url, @Nullable JSONObject json, @Nullable Map<String, String> headers) throws IOException {
+        return new HttpPostService(url).postJSON(json, headers);
     }
 
-    public static int postJSON(String url, JSONArray json, Map headers) throws IOException {
-        HttpPostService service = new HttpPostService(url);
-        return service.postJSON(json, headers);
+    public static int postJSON(@NonNull String url, @Nullable JSONArray json, @Nullable Map<String, String> headers) throws IOException {
+        return new HttpPostService(url).postJSON(json, headers);
     }
 
-    public static int postJSONFile(String url, File file, Map headers, UploadingProgressListener listener) throws IOException {
-        HttpPostService service = new HttpPostService(url);
-        return service.postJSONFile(file, headers, listener);
+    public static int postJSONFile(@NonNull String url, @NonNull File file, @Nullable Map<String, String> headers, @Nullable UploadingProgressListener listener) throws IOException {
+        return new HttpPostService(url).postJSONFile(file, headers, listener);
     }
 }

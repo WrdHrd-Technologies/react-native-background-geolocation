@@ -1,24 +1,8 @@
-/*
- * Copyright 2017 R3BL LLC.
- *
- * Licensed to the Apache Software Foundation (ASF) under one or more contributor
- * license agreements. See the NOTICE file distributed with this work for additional
- * information regarding copyright ownership. The ASF licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License. You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed
- * under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
- * CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
- */
-
 package com.marianhello.bgloc.service;
 
 import android.content.Context;
 import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Parcelable;
 import androidx.annotation.IntDef;
@@ -26,42 +10,12 @@ import androidx.annotation.IntDef;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
-// CommandId enumeration
-// more info - http://blog.shamanland.com/2016/02/int-string-enum.html
-@IntDef({
-        CommandId.INVALID,
-        CommandId.START,
-        CommandId.START_FOREGROUND_SERVICE,
-        CommandId.STOP,
-        CommandId.STOP_FOREGROUND,
-        CommandId.START_FOREGROUND,
-        CommandId.CONFIGURE,
-        CommandId.REGISTER_HEADLESS_TASK,
-        CommandId.START_HEADLESS_TASK,
-        CommandId.STOP_HEADLESS_TASK,
-        CommandId.HEARTBEAT_PING
-})
-@Retention(RetentionPolicy.SOURCE)
-@interface CommandId {
-    int INVALID = -1;
-    int START = 0;
-    int START_FOREGROUND_SERVICE = 1;
-    int STOP = 2;
-    int STOP_FOREGROUND = 3;
-    int START_FOREGROUND = 4;
-    int CONFIGURE = 5;
-    int REGISTER_HEADLESS_TASK = 6;
-    int START_HEADLESS_TASK = 7;
-    int STOP_HEADLESS_TASK = 8;
-    int HEARTBEAT_PING = 9;
-}
-
 public class LocationServiceIntentBuilder {
 
     private static final String KEY_MESSAGE = "msg";
     private static final String KEY_COMMAND = "cmd";
 
-    private Context mContext;
+    private final Context mContext;
     private String mMessage;
     private Command mCommand;
 
@@ -126,16 +80,27 @@ public class LocationServiceIntentBuilder {
             return bundle;
         }
 
+        @SuppressWarnings("deprecation")
         public static Command from(Bundle bundle) {
-            @CommandId int commandId =  bundle.getInt(KEY_COMMAND_ID);
-            int argumentType = bundle.getInt(KEY_COMMAND_ARGUMENT_TYPE);
+            if (bundle == null) {
+                return new Command(CommandId.INVALID);
+            }
+
+            @CommandId int commandId = bundle.getInt(KEY_COMMAND_ID, CommandId.INVALID);
+            int argumentType = bundle.getInt(KEY_COMMAND_ARGUMENT_TYPE, ARGUMENT_TYPE_MISSING);
 
             if (argumentType == ARGUMENT_TYPE_STRING) {
                 return new Command(commandId, bundle.getString(KEY_COMMAND_ARGUMENT));
             } else if (argumentType == ARGUMENT_TYPE_PARCELABLE) {
-                // Important: don't remove Parcelable cast
-                // required for Java 1.8 compatibility
-                return new Command(commandId, (Parcelable) bundle.getParcelable(KEY_COMMAND_ARGUMENT));
+                Parcelable parcelable;
+                // Type-safe unmarshaling for Android 13 (API 33) and newer
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    parcelable = bundle.getParcelable(KEY_COMMAND_ARGUMENT, Parcelable.class);
+                } else {
+                    // Backward-compatible fallback branch for older Android versions
+                    parcelable = bundle.getParcelable(KEY_COMMAND_ARGUMENT);
+                }
+                return new Command(commandId, parcelable);
             }
 
             return new Command(commandId);
@@ -147,7 +112,7 @@ public class LocationServiceIntentBuilder {
     }
 
     public LocationServiceIntentBuilder(Context context) {
-        mContext = context;
+        mContext = context.getApplicationContext(); // Safeguard against short-lived Activity context leaks
     }
 
     public LocationServiceIntentBuilder setMessage(String message) {
@@ -155,27 +120,31 @@ public class LocationServiceIntentBuilder {
         return this;
     }
 
-    /**
-     * @param commandId Don't use {@link CommandId#INVALID} as a param. If you do then this method does
-     *     nothing.
-     */
     public LocationServiceIntentBuilder setCommand(@CommandId int commandId) {
-        mCommand = new Command(commandId);
+        if (commandId != CommandId.INVALID) {
+            mCommand = new Command(commandId);
+        }
         return this;
     }
 
     public LocationServiceIntentBuilder setCommand(@CommandId int commandId, String arg) {
-        mCommand = new Command(commandId, arg);
+        if (commandId != CommandId.INVALID) {
+            mCommand = new Command(commandId, arg);
+        }
         return this;
     }
 
     public LocationServiceIntentBuilder setCommand(@CommandId int commandId, Parcelable arg) {
-        mCommand = new Command(commandId, arg);
+        if (commandId != CommandId.INVALID) {
+            mCommand = new Command(commandId, arg);
+        }
         return this;
     }
 
     public Intent build() {
-        assert mContext != null : "Context can not be null!";
+        if (mContext == null) {
+            throw new IllegalStateException("Cannot construct intent tracking configuration: context target reference lost.");
+        }
         Intent intent = new Intent(mContext, LocationServiceImpl.class);
         if (mCommand != null) {
             intent.putExtra(KEY_COMMAND, mCommand.toBundle());
@@ -187,19 +156,21 @@ public class LocationServiceIntentBuilder {
     }
 
     public static boolean containsCommand(Intent intent) {
-        return intent.hasExtra(KEY_COMMAND);
+        return intent != null && intent.hasExtra(KEY_COMMAND);
     }
 
     public static boolean containsMessage(Intent intent) {
-        return intent.hasExtra(KEY_MESSAGE);
+        return intent != null && intent.hasExtra(KEY_MESSAGE);
     }
 
     public static Command getCommand(Intent intent) {
+        if (intent == null) return new Command(CommandId.INVALID);
         Bundle bundle = intent.getBundleExtra(KEY_COMMAND);
         return Command.from(bundle);
     }
 
     public static String getMessage(Intent intent) {
+        if (intent == null) return null;
         return intent.getStringExtra(KEY_MESSAGE);
     }
-} //end class LocationServiceIntentBuilder
+}

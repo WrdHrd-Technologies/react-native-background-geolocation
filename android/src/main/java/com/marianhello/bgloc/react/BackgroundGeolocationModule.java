@@ -94,6 +94,20 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
 
         facade = new BackgroundGeolocationFacade(getContext(), this);
         logger = LoggerManager.getLogger(BackgroundGeolocationModule.class);
+
+        if (reactContext != null) {
+            new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        logger.info("Triggering early TrueTime network calibration from Module bridge constructor.");
+                        RealTimeHelper.initialize(getContext());
+                    } catch (Exception e) {
+                        logger.error("Early RealTimeHelper initialization failed", e);
+                    }
+                }
+            });
+        }
     }
 
     @Override
@@ -149,7 +163,7 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
         try {
             Setting setting = new Setting();
             setting.setStarted(true);
-            setting.setUpdatedAt((int) RealTimeHelper.now().getTime());
+            setting.setUpdatedAt(RealTimeHelper.now().getTime());
             facade.setting(setting);
             facade.start();
         }
@@ -164,7 +178,7 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
         try {
             Setting setting = new Setting();
             setting.setStarted(false);
-            setting.setUpdatedAt((int) RealTimeHelper.now().getTime());
+            setting.setUpdatedAt(RealTimeHelper.now().getTime());
             facade.setting(setting);
         }
         catch(Exception ignore){
@@ -178,15 +192,6 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
 
     @ReactMethod
     public void configure(final ReadableMap options, final Callback success, final Callback error) {
-        if(reactContext.getCurrentActivity() != null) {
-            reactContext.getCurrentActivity().runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    RealTimeHelper.initialize(getContext());
-                }
-            });
-        }
-
         runOnBackgroundThread(new Runnable() {
             @Override
             public void run() {
@@ -326,7 +331,24 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
                     out.putString("timestamp", new Long(logEntry.getTimestamp()).toString());
                     out.putString("logger", logEntry.getLoggerName());
                     if (logEntry.hasStackTrace()) {
-                        out.putString("stackTrace", logEntry.getStackTrace());
+                        java.util.Collection<String> traceLines = logEntry.getStackTrace();
+
+                        if (traceLines != null && !traceLines.isEmpty()) {
+                            StringBuilder sb = new StringBuilder();
+                            boolean isFirst = true;
+
+                            for (String line : traceLines) {
+                                if (!isFirst) {
+                                    sb.append("\n");
+                                }
+                                sb.append(line);
+                                isFirst = false;
+                            }
+
+                            out.putString("stackTrace", sb.toString());
+                        } else {
+                            out.putString("stackTrace", "");
+                        }
                     }
 
                     logEntriesArray.pushMap(out);
@@ -368,14 +390,23 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
         success.invoke();
     }
 
-    //Auto Start
+    @ReactMethod
+    public void checkAutoStartSupport(Callback success, Callback error) {
+        try {
+            AutoStartHelper helper = new AutoStartHelper();
+            boolean isSupported = helper.isAutoStartSupportedOnDevice(reactContext);
+            success.invoke(isSupported);
+        } catch (Exception e) {
+            error.invoke(ErrorMap.from(e));
+        }
+    }
+
     @ReactMethod
     public void startAutostartSettings() {
         AutoStartHelper autoStartHelper = new AutoStartHelper();
 
         autoStartHelper.getAutoStartPermission(reactContext.getCurrentActivity());
     }
-    // End Of Auto Start
 
     private void sendEvent(String eventName, Object params) {
         getReactApplicationContext()

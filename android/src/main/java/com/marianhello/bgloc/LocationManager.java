@@ -3,42 +3,70 @@ package com.marianhello.bgloc;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.Context;
-import android.location.Criteria;
+import android.content.pm.PackageManager;
 import android.location.Location;
-import android.location.LocationListener;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Looper;
+import android.util.Log;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.core.content.ContextCompat;
 
 import com.github.jparkie.promise.Promise;
 import com.github.jparkie.promise.Promises;
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationCallback;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationResult;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.Priority;
+import com.google.android.gms.tasks.Task;
+import com.google.android.gms.tasks.Tasks;
 import com.intentfilter.androidpermissions.PermissionManager;
 
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-public class LocationManager {
-    private Context mContext;
-    private static LocationManager mLocationManager;
+public final class LocationManager {
+    private static final String TAG = "LocationManager";
+    private static volatile LocationManager sInstance;
+
+    private final Context mContext;
+    private final FusedLocationProviderClient mFusedClient;
+    private final ExecutorService mWorkerExecutor;
 
     public static final String[] PERMISSIONS = new String[]{
             Manifest.permission.ACCESS_COARSE_LOCATION,
             Manifest.permission.ACCESS_FINE_LOCATION
     };
 
-    private LocationManager(Context context) {
-        mContext = context;
+    public class PermissionDeniedException extends Exception {
+        public PermissionDeniedException() {
+            super("Required location access configurations were rejected by the user.");
+        }
     }
 
-    public class PermissionDeniedException extends Exception {}
+    private LocationManager(@NonNull Context context) {
+        this.mContext = context.getApplicationContext();
+        this.mFusedClient = LocationServices.getFusedLocationProviderClient(mContext);
+        this.mWorkerExecutor = Executors.newSingleThreadExecutor();
+    }
 
-    public static LocationManager getInstance(Context context) {
-        if (mLocationManager == null) {
-            mLocationManager = new LocationManager(context.getApplicationContext());
+    public static LocationManager getInstance(@NonNull Context context) {
+        if (sInstance == null) {
+            synchronized (LocationManager.class) {
+                if (sInstance == null) {
+                    sInstance = new LocationManager(context);
+                }
+            }
         }
-        return mLocationManager;
+        return sInstance;
     }
 
     public Promise<Location> getCurrentLocation(final int timeout, final long maximumAge, final boolean enableHighAccuracy) {
@@ -48,14 +76,23 @@ public class LocationManager {
         permissionManager.checkPermissions(Arrays.asList(PERMISSIONS), new PermissionManager.PermissionRequestListener() {
             @Override
             public void onPermissionGranted() {
-                try {
-                    Location currentLocation = getCurrentLocationNoCheck(timeout, maximumAge, enableHighAccuracy);
-                    promise.set(currentLocation);
-                } catch (TimeoutException e) {
-                    promise.setError(e);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
+                mWorkerExecutor.execute(() -> {
+                    try {
+                        Location currentLocation = getCurrentLocationNoCheck(timeout, maximumAge, enableHighAccuracy);
+                        if (currentLocation != null) {
+                            promise.set(currentLocation);
+                        } else {
+                            promise.setError(new Exception("Fused hardware returned an empty coordinate set."));
+                        }
+                    } catch (TimeoutException e) {
+                        Log.w(TAG, "Hardware request window timed out: " + e.getMessage());
+                        promise.setError(e);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    } catch (Exception e) {
+                        promise.setError(e);
+                    }
+                });
             }
 
             @Override
@@ -67,72 +104,98 @@ public class LocationManager {
         return promise;
     }
 
-    /**
-     * Get current location without permission checking
-     *
-     * @param timeout
-     * @param maximumAge
-     * @param enableHighAccuracy
-     * @return
-     * @throws InterruptedException
-     * @throws TimeoutException
-     */
-    @SuppressLint("MissingPermission")
-    public Location getCurrentLocationNoCheck(int timeout, long maximumAge, boolean enableHighAccuracy) throws InterruptedException, TimeoutException {
-        final long minLocationTime = System.currentTimeMillis() - maximumAge;
-        final android.location.LocationManager locationManager = (android.location.LocationManager) mContext.getSystemService(Context.LOCATION_SERVICE);
-
-        Location lastKnownGPSLocation = locationManager.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER);
-        if (lastKnownGPSLocation != null && lastKnownGPSLocation.getTime() >= minLocationTime) {
-            return lastKnownGPSLocation;
+    public void getCurrentLocation(final int timeoutMs, final long maximumAgeMs, final boolean enableHighAccuracy, @NonNull final com.facebook.react.bridge.Promise bridgePromise) {
+        if (!hasRequiredPermissions()) {
+            bridgePromise.reject("PERMISSION_DENIED", "Required location deployment permissions are absent.");
+            return;
         }
 
-        Location lastKnownNetworkLocation = locationManager.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER);
-        if (lastKnownNetworkLocation != null && lastKnownNetworkLocation.getTime() >= minLocationTime) {
-            return lastKnownNetworkLocation;
-        }
-
-        Criteria criteria = new Criteria();
-        criteria.setAccuracy(enableHighAccuracy ? Criteria.ACCURACY_FINE : Criteria.ACCURACY_COARSE);
-
-        CurrentLocationListener locationListener = new CurrentLocationListener();
-        locationManager.requestSingleUpdate(criteria, locationListener, Looper.getMainLooper());
-
-        if (!locationListener.mCountDownLatch.await(timeout, TimeUnit.MILLISECONDS)) {
-            locationManager.removeUpdates(locationListener);
-            throw new TimeoutException();
-        }
-
-        if (locationListener.mLocation != null) {
-            return locationListener.mLocation;
-        }
-
-        return null;
+        mWorkerExecutor.execute(() -> {
+            try {
+                Location location = getCurrentLocationNoCheck(timeoutMs, maximumAgeMs, enableHighAccuracy);
+                if (location != null) {
+                    bridgePromise.resolve(location);
+                } else {
+                    bridgePromise.reject("LOCATION_NULL", "Hardware returned an empty coordinate set.");
+                }
+            } catch (TimeoutException e) {
+                bridgePromise.reject("TIMEOUT", "Hardware tracking lock duration window timed out.");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                bridgePromise.reject("INTERRUPTED", "Execution thread sequence was interrupted.");
+            } catch (Exception e) {
+                bridgePromise.reject("ERROR", e.getMessage());
+            }
+        });
     }
 
-    static class CurrentLocationListener implements LocationListener {
-        Location mLocation = null;
-        final CountDownLatch mCountDownLatch = new CountDownLatch(1);
+    @Nullable
+    @SuppressLint("MissingPermission")
+    public Location getCurrentLocationNoCheck(int timeoutMs, long maximumAgeMs, boolean enableHighAccuracy) throws InterruptedException, TimeoutException {
+        final long minLocationTimeThreshold = System.currentTimeMillis() - maximumAgeMs;
+        final Location[] locationWrapper = new Location[1];
 
-        @Override
-        public void onLocationChanged(Location location) {
-            mLocation = location;
-            mCountDownLatch.countDown();
+        // 1. Synchronously look up cached positions across background thread pools
+        try {
+            Task<Location> lastLocationTask = mFusedClient.getLastLocation();
+            Location cachedLoc = Tasks.await(lastLocationTask, 500, TimeUnit.MILLISECONDS);
+            if (cachedLoc != null && cachedLoc.getTime() >= minLocationTimeThreshold) {
+                Log.d(TAG, "Acquired clean coordinates using Google's local location cache.");
+                return cachedLoc;
+            }
+        } catch (Exception e) {
+            Log.d(TAG, "Cached database validation skipped, polling live system sensors.");
         }
 
-        @Override
-        public void onStatusChanged(String s, int i, Bundle bundle) {
+        // 2. Setup live hardware tracking loop using Looper.getMainLooper()
+        final CountDownLatch liveLatch = new CountDownLatch(1);
 
+        LocationRequest locationRequest = new LocationRequest.Builder(
+                enableHighAccuracy ? Priority.PRIORITY_HIGH_ACCURACY : Priority.PRIORITY_BALANCED_POWER_ACCURACY, 1000)
+                .setMaxUpdates(1)
+                .setDurationMillis(timeoutMs)
+                .build();
+
+        LocationCallback callback = new LocationCallback() {
+            @Override
+            public void onLocationResult(@NonNull LocationResult locationResult) {
+                Location lastLocation = locationResult.getLastLocation();
+                if (lastLocation != null) {
+                    locationWrapper[0] = lastLocation;
+                    Log.d(TAG, "Live hardware sensor tracking location locked: " + lastLocation);
+                }
+                liveLatch.countDown();
+            }
+        };
+
+        // CRITICAL REFACTOR: Route through Looper.getMainLooper() instead of the worker thread pool
+        // This ensures compatibility with Android Emulators and mock location injection layers
+        mFusedClient.requestLocationUpdates(locationRequest, callback, Looper.getMainLooper());
+
+        boolean reachedTarget = liveLatch.await(timeoutMs, TimeUnit.MILLISECONDS);
+
+        // Remove updates from the main thread loop
+        mFusedClient.removeLocationUpdates(callback);
+
+        if (!reachedTarget || locationWrapper[0] == null) {
+            throw new TimeoutException("Fused hardware location lock failed within assigned deadline bounds.");
         }
 
-        @Override
-        public void onProviderEnabled(String s) {
+        return locationWrapper[0];
+    }
 
+    public boolean hasRequiredPermissions() {
+        int finePermission = ContextCompat.checkSelfPermission(mContext, Manifest.permission.ACCESS_FINE_LOCATION);
+        int coarsePermission = ContextCompat.checkSelfPermission(mContext, Manifest.permission.ACCESS_COARSE_LOCATION);
+
+        boolean baseGranted = finePermission == PackageManager.PERMISSION_GRANTED ||
+                coarsePermission == PackageManager.PERMISSION_GRANTED;
+
+        if (baseGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            int backgroundPermission = ContextCompat.checkSelfPermission(mContext, Manifest.permission.ACCESS_BACKGROUND_LOCATION);
+            Log.d(TAG, "Evaluating modern background permission allocation profile status: " + backgroundPermission);
         }
 
-        @Override
-        public void onProviderDisabled(String s) {
-
-        }
+        return baseGranted;
     }
 }

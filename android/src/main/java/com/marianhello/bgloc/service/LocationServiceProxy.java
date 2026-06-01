@@ -3,29 +3,29 @@ package com.marianhello.bgloc.service;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.util.Log;
 
 import com.marianhello.bgloc.Config;
 import com.marianhello.bgloc.Setting;
 
 public class LocationServiceProxy implements LocationService, LocationServiceInfo {
+    private static final String TAG = "LocationServiceProxy";
     private final Context mContext;
-    private final LocationServiceIntentBuilder mIntentBuilder;
 
     public LocationServiceProxy(Context context) {
-        mContext = context;
-        mIntentBuilder = new LocationServiceIntentBuilder(context);
+        mContext = context.getApplicationContext();
+    }
+
+   
+    private LocationServiceIntentBuilder getFreshBuilder() {
+        return LocationServiceIntentBuilder.getInstance(mContext);
     }
 
     @Override
     public void configure(Config config) {
-        // do not start service if it was not already started
-        // FIXES:
-        // https://github.com/mauron85/react-native-background-geolocation/issues/360
-        // https://github.com/mauron85/cordova-plugin-background-geolocation/issues/551
-        // https://github.com/mauron85/cordova-plugin-background-geolocation/issues/552
         if (!isStarted()) { return; }
 
-        Intent intent = mIntentBuilder
+        Intent intent = getFreshBuilder()
                 .setCommand(CommandId.CONFIGURE, config)
                 .build();
         executeIntentCommand(intent);
@@ -33,7 +33,7 @@ public class LocationServiceProxy implements LocationService, LocationServiceInf
 
     @Override
     public void registerHeadlessTask(String taskRunnerClass) {
-        Intent intent = mIntentBuilder
+        Intent intent = getFreshBuilder()
                 .setCommand(CommandId.REGISTER_HEADLESS_TASK, taskRunnerClass)
                 .build();
         executeIntentCommand(intent);
@@ -43,7 +43,7 @@ public class LocationServiceProxy implements LocationService, LocationServiceInf
     public void startHeadlessTask() {
         if (!isStarted()) { return; }
 
-        Intent intent = mIntentBuilder
+        Intent intent = getFreshBuilder()
                 .setCommand(CommandId.START_HEADLESS_TASK)
                 .build();
         executeIntentCommand(intent);
@@ -53,7 +53,7 @@ public class LocationServiceProxy implements LocationService, LocationServiceInf
     public void stopHeadlessTask() {
         if (!isStarted()) { return; }
 
-        Intent intent = mIntentBuilder
+        Intent intent = getFreshBuilder()
                 .setCommand(CommandId.STOP_HEADLESS_TASK)
                 .build();
         executeIntentCommand(intent);
@@ -61,20 +61,27 @@ public class LocationServiceProxy implements LocationService, LocationServiceInf
 
     @Override
     public void executeProviderCommand(int command, int arg) {
-        // TODO
+        if (!isStarted()) { return; }
+
+        Intent intent = getFreshBuilder()
+                .setCommand(command, String.valueOf(arg))
+                .build();
+        executeIntentCommand(intent);
     }
 
     @Override
     public void start() {
-        Intent intent = mIntentBuilder.setCommand(CommandId.START).build();
-//        intent.addFlags(Intent.FLAG_FROM_BACKGROUND);
-        // start service to keep service running even if no clients are bound to it
+        Intent intent = getFreshBuilder()
+                .setCommand(CommandId.START)
+                .build();
         executeIntentCommand(intent);
     }
 
     @Override
     public void startForegroundService() {
-       Intent intent = mIntentBuilder.setCommand(CommandId.START_FOREGROUND_SERVICE).build();
+        Intent intent = getFreshBuilder()
+                .setCommand(CommandId.START_FOREGROUND_SERVICE)
+                .build();
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 mContext.startForegroundService(intent);
@@ -82,7 +89,7 @@ public class LocationServiceProxy implements LocationService, LocationServiceInf
                 mContext.startService(intent);
             }
         } catch (Exception e) {
-             android.util.Log.e("LocationServiceProxy", "Failed to start foreground service", e);
+             Log.e(TAG, "Fatal restriction: OS rejected immediate foreground initialization sequence.", e);
         }
     }
 
@@ -90,7 +97,9 @@ public class LocationServiceProxy implements LocationService, LocationServiceInf
     public void stop() {
         if (!isStarted()) { return; }
 
-        Intent intent = mIntentBuilder.setCommand(CommandId.STOP).build();
+        Intent intent = getFreshBuilder()
+                .setCommand(CommandId.STOP)
+                .build();
         executeIntentCommand(intent);
     }
 
@@ -98,20 +107,27 @@ public class LocationServiceProxy implements LocationService, LocationServiceInf
     public void stopForeground() {
         if (!isStarted()) { return; }
 
-        Intent intent = mIntentBuilder.setCommand(CommandId.STOP_FOREGROUND).build();
+        Intent intent = getFreshBuilder()
+                .setCommand(CommandId.STOP_FOREGROUND)
+                .build();
         executeIntentCommand(intent);
     }
 
     @Override
     public void setting(Setting setting) {
-
+        Intent intent = getFreshBuilder()
+                .setCommand(CommandId.CONFIGURE) 
+                .build();
+        executeIntentCommand(intent);
     }
 
     @Override
     public void startForeground() {
         if (!isStarted()) { return; }
 
-        Intent intent = mIntentBuilder.setCommand(CommandId.START_FOREGROUND).build();
+        Intent intent = getFreshBuilder()
+                .setCommand(CommandId.START_FOREGROUND)
+                .build();
         executeIntentCommand(intent);
     }
 
@@ -122,10 +138,7 @@ public class LocationServiceProxy implements LocationService, LocationServiceInf
     }
 
     public boolean isRunning() {
-        if (isStarted()) {
-            return LocationServiceImpl.isRunning();
-        }
-        return false;
+        return isStarted() && LocationServiceImpl.isRunning();
     }
 
     @Override
@@ -138,31 +151,10 @@ public class LocationServiceProxy implements LocationService, LocationServiceInf
         try {
             mContext.startService(intent);
         } catch (IllegalStateException e) {
-            // The app is in the background and not allowed to start a background service.
-            // DO NOT call startForegroundService here.
-            // Log this failure. You are trying to send a command while the app is backgrounded.
-            android.util.Log.e("LocationServiceProxy", "Cannot dispatch command in background: " + intent.getAction(), e);
+            Log.w(TAG, "Command dispatch dropped. App is backgrounded and cannot start services. Command ID: " 
+                    + LocationServiceIntentBuilder.getCommand(intent).getId(), e);
         } catch (Exception ex) {
-            android.util.Log.e("LocationServiceProxy", "Unexpected error dispatching command", ex);
+            Log.e(TAG, "Unexpected crash error during command pipeline dispatch matrix execution.", ex);
         }
     }
-
-    // private void executeIntentCommand(Intent intent) {
-    //     try{
-    //         mContext.startService(intent);
-    //     } catch (IllegalStateException e) {
-    //         try{
-    //             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-    //                 mContext.startForegroundService(intent);
-    //             } else {
-    //                 mContext.startService(intent);
-    //             }
-    //         } catch (Exception ex) {
-                
-    //         }
-    //     }
-    //     catch(Exception ex){
-            
-    //     }
-    // }
 }

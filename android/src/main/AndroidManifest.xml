@@ -2,11 +2,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application>
-        <service 
-            android:name="com.marianhello.backgroundgeolocation.floatingview.FloatingViewService" 
-            android:foregroundServiceType="location" 
-            android:exported="false" />
-        
         <provider
             android:name="com.marianhello.bgloc.data.provider.LocationContentProvider"
             android:authorities="@string/mauron85_bgloc_content_authority"
@@ -35,10 +30,14 @@
             </intent-filter>
         </receiver>
 
-        <receiver 
-            android:name="com.wrdhrd.bgloc.ActivityRecognitionReceiver" 
-            android:enabled="true" 
-            android:exported="false" />
+        <receiver
+            android:name="com.marianhello.bgloc.UpgradeReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
     <uses-permission android:name="android.hardware.location" />

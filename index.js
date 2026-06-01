@@ -227,6 +227,14 @@ var BackgroundGeolocation = {
             return RNBackgroundGeolocation.startAutostartSettings()
         }
   },
+
+  checkAutoStartSupport: function(successFn, errorFn) {
+    successFn = successFn || emptyFn;
+    errorFn = errorFn || emptyFn;
+    if(Platform.OS === 'android') {
+      RNBackgroundGeolocation.checkAutoStartSupport(successFn, errorFn);
+    }
+  },
 };
 
 module.exports = BackgroundGeolocation;

@@ -1,12 +1,3 @@
-/*
-According to apache license
-
-This is fork of christocracy cordova-plugin-background-geolocation plugin
-https://github.com/christocracy/cordova-plugin-background-geolocation
-
-This is a new class
-*/
-
 package com.marianhello.bgloc.provider;
 
 import android.content.BroadcastReceiver;
@@ -15,40 +6,40 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.location.Location;
 import android.media.AudioManager;
-import android.provider.Settings;
-import android.widget.Toast;
 import android.os.Build;
+import android.provider.Settings;
+import android.util.Log;
+import android.widget.Toast;
+
 import com.google.android.gms.location.DetectedActivity;
 import com.marianhello.bgloc.Config;
 import com.marianhello.bgloc.PluginException;
 import com.marianhello.bgloc.data.BackgroundActivity;
 import com.marianhello.bgloc.data.BackgroundLocation;
+import com.marianhello.bgloc.data.BatteryInfo;
 import com.marianhello.bgloc.data.BatteryUtils;
 import com.marianhello.logging.LoggerManager;
 import com.marianhello.utils.ToneGenerator;
 import com.marianhello.utils.ToneGenerator.Tone;
 
-import java.lang.reflect.Field;
 
-/**
- * AbstractLocationProvider
- */
 public abstract class AbstractLocationProvider implements LocationProvider {
+    private static final String TAG = "AbstractLocProvider";
 
-    protected Integer PROVIDER_ID;
+    protected final Integer PROVIDER_ID;
     protected Config mConfig;
-    protected Context mContext;
+    protected final Context mContext; 
 
     protected ToneGenerator toneGenerator;
-    protected org.slf4j.Logger logger;
+    protected final org.slf4j.Logger logger;
 
     private ProviderDelegate mDelegate;
     private Location lastLocation;
 
     protected AbstractLocationProvider(Context context, Integer provider_id) {
-        mContext = context;
+        mContext = context.getApplicationContext();
         logger = LoggerManager.getLogger(getClass());
-        this.PROVIDER_ID=provider_id;
+        this.PROVIDER_ID = provider_id;
         logger.info("Creating {}", getClass().getSimpleName());
     }
 
@@ -58,18 +49,17 @@ public abstract class AbstractLocationProvider implements LocationProvider {
     }
 
     @Override
-    public void onStart() {
-    }
+    public void onStart() {}
 
     @Override
-    public void onStop() {
-       
-    }
+    public void onStop() {}
 
     @Override
     public void onDestroy() {
-        toneGenerator.release();
-        toneGenerator = null;
+        if (toneGenerator != null) {
+            toneGenerator.release();
+            toneGenerator = null;
+        }
     }
 
     @Override
@@ -78,140 +68,131 @@ public abstract class AbstractLocationProvider implements LocationProvider {
     }
 
     @Override
-    public void onCommand(int commandId, int arg1) {
-        // override in child class
-    }
+    public void onCommand(int commandId, int arg1) {}
 
     public void setDelegate(ProviderDelegate delegate) {
         mDelegate = delegate;
     }
 
-    /**
-     * Register broadcast reciever
-     * @param receiver
-     */
-    protected Intent registerReceiver (BroadcastReceiver receiver, IntentFilter filter) {
-        if (Build.VERSION.SDK_INT >= 34) {
-            try {
-                Field receiverExportedField = Context.class.getField("RECEIVER_NOT_EXPORTED");
-                int receiverExported = receiverExportedField.getInt(null);
-                return mContext.registerReceiver(receiver, filter, receiverExported);
-            } catch (NoSuchFieldException | IllegalAccessException e) {
-                throw new RuntimeException(e);
-            }
-
+    protected Intent registerReceiver(BroadcastReceiver receiver, IntentFilter filter) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { 
+            return mContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         }
         return mContext.registerReceiver(receiver, filter);
     }
 
-    /**
-     * Unregister broadcast reciever
-     * @param receiver
-     */
-    protected void unregisterReceiver (BroadcastReceiver receiver) {
-        mContext.unregisterReceiver(receiver);
+    protected void unregisterReceiver(BroadcastReceiver receiver) {
+        try {
+            mContext.unregisterReceiver(receiver);
+        } catch (Exception e) {
+            Log.w(TAG, "Unregister receiver invoked out-of-bounds or receiver already dead.", e);
+        }
     }
 
-    /**
-     * Handle location as recorder by provider
-     * @param location
-     */
-    protected void handleLocation (Location location) {
+    protected void handleLocation(Location location) {
+        if (location == null) return;
         playDebugTone(Tone.BEEP);
+        
         if (mDelegate != null) {
-            //Prevent Duplicate Location
-            if(lastLocation != null) {
-                if(lastLocation.getTime() == location.getTime()) return;
+           
+            if (lastLocation != null && lastLocation.getTime() == location.getTime()) {
+                return;
             }
             lastLocation = location;
 
-            BatteryUtils.BatteryInfo batteryInfo = BatteryUtils.getBatteryStatus(mContext);
+            BatteryInfo batteryInfo = BatteryUtils.getBatteryStatus(mContext);
             BackgroundLocation bgLocation = BackgroundLocation.fromLocation(location);
+            
             bgLocation.setLocationProvider(PROVIDER_ID);
-            bgLocation.setBatteryLevel(batteryInfo.getBatteryPercentage());
-            bgLocation.setIsCharging(batteryInfo.isCharging());
-            bgLocation.setMockLocationsEnabled(hasMockLocationsEnabled());
+            bgLocation.setBatteryLevel(batteryInfo.getBatteryLevel());
+            bgLocation.setIsCharging(batteryInfo.getIsCharging());
+            
+            bgLocation.setMockLocationsEnabled(hasMockLocationsEnabled(location));
+            
             mDelegate.onLocation(bgLocation);
         }
     }
 
-    /**
-     * Handle stationary location with radius
-     *
-     * @param location
-     * @param radius radius of stationary region
-     */
-    protected void handleStationary (Location location, float radius) {
+    protected void handleStationary(Location location, float radius) {
+        if (location == null) return;
         playDebugTone(Tone.LONG_BEEP);
+        
         if (mDelegate != null) {
-            BatteryUtils.BatteryInfo batteryInfo = BatteryUtils.getBatteryStatus(mContext);
+            BatteryInfo batteryInfo = BatteryUtils.getBatteryStatus(mContext);
             BackgroundLocation bgLocation = BackgroundLocation.fromLocation(location);
+            
             bgLocation.setLocationProvider(PROVIDER_ID);
-            bgLocation.setBatteryLevel(batteryInfo.getBatteryPercentage());
-            bgLocation.setIsCharging(batteryInfo.isCharging());
-            bgLocation.setMockLocationsEnabled(hasMockLocationsEnabled());
+            bgLocation.setBatteryLevel(batteryInfo.getBatteryLevel());
+            bgLocation.setIsCharging(batteryInfo.getIsCharging());
+            bgLocation.setMockLocationsEnabled(hasMockLocationsEnabled(location));
             bgLocation.setRadius(radius);
+            
             mDelegate.onStationary(bgLocation);
         }
     }
 
-    /**
-     * Handle stationary location without radius
-     *
-     * @param location
-     */
-    protected void handleStationary (Location location) {
+    protected void handleStationary(Location location) {
+        if (location == null) return;
         playDebugTone(Tone.LONG_BEEP);
+        
         if (mDelegate != null) {
-            BatteryUtils.BatteryInfo batteryInfo = BatteryUtils.getBatteryStatus(mContext);
+            BatteryInfo batteryInfo = BatteryUtils.getBatteryStatus(mContext);
             BackgroundLocation bgLocation = BackgroundLocation.fromLocation(location);
+            
             bgLocation.setLocationProvider(PROVIDER_ID);
-            bgLocation.setBatteryLevel(batteryInfo.getBatteryPercentage());
-            bgLocation.setIsCharging(batteryInfo.isCharging());
-            bgLocation.setMockLocationsEnabled(hasMockLocationsEnabled());
+            bgLocation.setBatteryLevel(batteryInfo.getBatteryLevel());
+            bgLocation.setIsCharging(batteryInfo.getIsCharging());
+            bgLocation.setMockLocationsEnabled(hasMockLocationsEnabled(location));
+            
             mDelegate.onStationary(bgLocation);
         }
     }
 
     protected void handleActivity(DetectedActivity activity) {
-        if (mDelegate != null) {
+        if (mDelegate != null && activity != null) {
             mDelegate.onActivity(new BackgroundActivity(PROVIDER_ID, activity));
         }
     }
 
-    /**
-     * Handle security exception
-     * @param exception
-     */
-    protected void handleSecurityException (SecurityException exception) {
+    protected void handleSecurityException(SecurityException exception) {
         PluginException error = new PluginException(exception.getMessage(), PluginException.PERMISSION_DENIED_ERROR);
         if (mDelegate != null) {
             mDelegate.onError(error);
         }
     }
 
-    protected void showDebugToast (String text) {
-        if (mConfig.isDebugging()) {
+    protected void showDebugToast(String text) {
+        if (mConfig != null && mConfig.isDebugging()) {
             Toast.makeText(mContext, text, Toast.LENGTH_LONG).show();
         }
     }
 
-    public Boolean hasMockLocationsEnabled() {
-        return Settings.Secure.getString(mContext.getContentResolver(), android.provider.Settings.Secure.ALLOW_MOCK_LOCATION).equals("1");
+    public Boolean hasMockLocationsEnabled(Location location) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return location != null && location.isMock();
+        }
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return location != null && location.isFromMockProvider();
+        }
+
+        try {
+            String value = Settings.Secure.getString(mContext.getContentResolver(), "mock_location");
+            return "1".equals(value);
+        } catch (Exception e) {
+            return false;
+        }
     }
 
-    /**
-     * Plays debug sound
-     * @param name toneGenerator
-     */
-    protected void playDebugTone (int name) {
-        if (toneGenerator == null || !mConfig.isDebugging()) return;
-
-        int duration = 1000;
-        toneGenerator.startTone(name, duration);
+    protected void playDebugTone(int name) {
+        if (toneGenerator == null || mConfig == null || !mConfig.isDebugging()) return;
+        try {
+            toneGenerator.startTone(name, 1000);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to output audio debug tone.", e);
+        }
     }
 
     @Override
-    public void onResume() {
-    }
+    public void onResume() {}
 }

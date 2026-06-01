@@ -7,14 +7,23 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
-import androidx.core.util.TimeUtils;
+import android.util.Log;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 import com.marianhello.bgloc.data.sqlite.SQLiteLocationContract.LocationEntry;
-import com.marianhello.utils.RealTimeHelper;
+import com.wrdhrd.bgloc.provider.FusedDistanceFilterLocationProvider;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.HashMap;
+import java.util.Map;
+
 public class BackgroundLocation implements Parcelable {
+    private static final String TAG = "BackgroundLocation";
+
     public static final int DELETED = 0;
     public static final int POST_PENDING = 1;
     public static final int SYNC_PENDING = 2;
@@ -23,6 +32,7 @@ public class BackgroundLocation implements Parcelable {
     private Integer locationProvider = null;
     private Integer batteryLevel = null;
     private Long batchStartMillis = null;
+    
     private String provider;
     private double latitude = 0.0;
     private double longitude = 0.0;
@@ -34,6 +44,7 @@ public class BackgroundLocation implements Parcelable {
     private float bearing = 0.0f;
     private double altitude = 0.0f;
     private float radius = 0.0f;
+    
     private boolean hasAccuracy = false;
     private boolean hasAltitude = false;
     private boolean hasSpeed = false;
@@ -44,56 +55,52 @@ public class BackgroundLocation implements Parcelable {
     private int status = POST_PENDING;
     private Bundle extras = null;
 
-    private static final long TWO_MINUTES_IN_NANOS = 1000000000L * 60 * 2;
+    private static final Map<String, PropertyAccessor> ACCESSOR_MAP = new HashMap<>();
 
     public BackgroundLocation() {
-        realtime = RealTimeHelper.now().getTime();
+        this.realtime = System.currentTimeMillis();
     }
 
     public BackgroundLocation(String provider) {
         this.provider = provider;
-        realtime = RealTimeHelper.now().getTime();
+        this.realtime = System.currentTimeMillis();
     }
 
 
-
-    /**
-     * Construct a new Location object that is copied from an existing one.
-     * @param location
-     */
-    public BackgroundLocation(BackgroundLocation l) {
-        locationId = l.locationId;
-        locationProvider = l.locationProvider;
-        batchStartMillis = l.batchStartMillis;
-        provider = l.provider;
-        latitude = l.latitude;
-        longitude = l.longitude;
-        time = l.time;
-        realtime = RealTimeHelper.now().getTime();
-        elapsedRealtimeNanos = l.elapsedRealtimeNanos;
-        accuracy = l.accuracy;
-        speed = l.speed;
-        bearing = l.bearing;
-        altitude = l.altitude;
-        radius = l.radius;
-        hasAccuracy = l.hasAccuracy;
-        hasAltitude = l.hasAltitude;
-        hasSpeed = l.hasSpeed;
-        hasBearing = l.hasBearing;
-        hasRadius = l.hasRadius;
-        mockFlags = l.mockFlags;
-        status = l.status;
-        batteryLevel = l.batteryLevel;
-        isCharging = l.isCharging;
-        extras = (l.extras == null) ? null : new Bundle(l.extras);
+    public BackgroundLocation(@NonNull BackgroundLocation l) {
+        this.locationId = l.locationId;
+        this.locationProvider = l.locationProvider;
+        this.batchStartMillis = l.batchStartMillis;
+        this.provider = l.provider;
+        this.latitude = l.latitude;
+        this.longitude = l.longitude;
+        this.time = l.time;
+        this.realtime = l.realtime;
+        this.elapsedRealtimeNanos = l.elapsedRealtimeNanos;
+        this.accuracy = l.accuracy;
+        this.speed = l.speed;
+        this.bearing = l.bearing;
+        this.altitude = l.altitude;
+        this.radius = l.radius;
+        this.hasAccuracy = l.hasAccuracy;
+        this.hasAltitude = l.hasAltitude;
+        this.hasSpeed = l.hasSpeed;
+        this.hasBearing = l.hasBearing;
+        this.hasRadius = l.hasRadius;
+        this.mockFlags = l.mockFlags;
+        this.status = l.status;
+        this.batteryLevel = l.batteryLevel;
+        this.isCharging = l.isCharging;
+        this.extras = (l.extras == null) ? null : new Bundle(l.extras);
     }
 
     private static BackgroundLocation fromParcel(Parcel in) {
         BackgroundLocation l = new BackgroundLocation();
 
-        l.locationId = in.readLong();
-        l.locationProvider = in.readInt();
-        l.batchStartMillis = in.readLong();
+        l.locationId = in.readByte() == 0 ? null : in.readLong();
+        l.locationProvider = in.readByte() == 0 ? null : in.readInt();
+        l.batchStartMillis = in.readByte() == 0 ? null : in.readLong();
+        
         l.provider = in.readString();
         l.latitude = in.readDouble();
         l.longitude = in.readDouble();
@@ -104,29 +111,31 @@ public class BackgroundLocation implements Parcelable {
         l.bearing = in.readFloat();
         l.altitude = in.readDouble();
         l.radius = in.readFloat();
+        
         l.hasAccuracy = in.readInt() != 0;
         l.hasAltitude = in.readInt() != 0;
         l.hasSpeed = in.readInt() != 0;
         l.hasBearing = in.readInt() != 0;
         l.hasRadius = in.readInt() != 0;
+        
         l.mockFlags = in.readInt();
         l.status = in.readInt();
-        l.batteryLevel = in.readInt();
+        l.batteryLevel = in.readByte() == 0 ? null : in.readInt();
         l.isCharging = in.readInt() != 0;
         l.realtime = in.readLong();
-        l.extras = in.readBundle();
+        l.extras = in.readBundle(BackgroundLocation.class.getClassLoader());
 
         return l;
     }
 
-    public static BackgroundLocation fromLocation(Location location) {
+    @NonNull
+    public static BackgroundLocation fromLocation(@NonNull Location location) {
         BackgroundLocation l = new BackgroundLocation();
-
         l.provider = location.getProvider();
         l.latitude = location.getLatitude();
         l.longitude = location.getLongitude();
         l.time = location.getTime();
-        l.realtime = RealTimeHelper.now().getTime();
+        l.realtime = System.currentTimeMillis();
         l.accuracy = location.getAccuracy();
         l.speed = location.getSpeed();
         l.bearing = location.getBearing();
@@ -147,43 +156,43 @@ public class BackgroundLocation implements Parcelable {
         return l;
     }
 
-    /**
-     * Create a new Location from a cursor
-     *
-     * @param c the cursor
-     * @return the note
-     */
-    public static BackgroundLocation fromCursor(Cursor c) {
+    @NonNull
+    public static BackgroundLocation fromCursor(@NonNull Cursor c) {
         BackgroundLocation l = new BackgroundLocation();
 
-        l.setProvider(c.getString(c.getColumnIndex(LocationEntry.COLUMN_NAME_PROVIDER)));
-        l.setTime(c.getLong(c.getColumnIndex(LocationEntry.COLUMN_NAME_TIME)));
-        l.setRealTime(c.getLong(c.getColumnIndex(LocationEntry.COLUMN_NAME_REALTIME)));
-        l.setElapsedRealtimeNanos(c.getLong(c.getColumnIndex(LocationEntry.COLUMN_NAME_ELAPSEDREALTIMENANO)));
-        if (c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_HAS_ACCURACY)) == 1) {
-            l.setAccuracy(c.getFloat(c.getColumnIndex(LocationEntry.COLUMN_NAME_ACCURACY)));
+        l.setProvider(c.getString(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_PROVIDER)));
+        l.setTime(c.getLong(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_TIME)));
+        l.setRealTime(c.getLong(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_REALTIME)));
+        l.setElapsedRealtimeNanos(c.getLong(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_ELAPSEDREALTIMENANO)));
+        
+        if (c.getInt(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_HAS_ACCURACY)) == 1) {
+            l.setAccuracy(c.getFloat(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_ACCURACY)));
         }
-        if (c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_HAS_SPEED)) == 1) {
-            l.setSpeed(c.getFloat(c.getColumnIndex(LocationEntry.COLUMN_NAME_SPEED)));
+        if (c.getInt(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_HAS_SPEED)) == 1) {
+            l.setSpeed(c.getFloat(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_SPEED)));
         }
-        if (c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_HAS_BEARING)) == 1) {
-            l.setBearing(c.getFloat(c.getColumnIndex(LocationEntry.COLUMN_NAME_BEARING)));
+        if (c.getInt(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_HAS_BEARING)) == 1) {
+            l.setBearing(c.getFloat(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_BEARING)));
         }
-        if (c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_HAS_ALTITUDE)) == 1) {
-            l.setAltitude(c.getDouble(c.getColumnIndex(LocationEntry.COLUMN_NAME_ALTITUDE)));
+        if (c.getInt(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_HAS_ALTITUDE)) == 1) {
+            l.setAltitude(c.getDouble(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_ALTITUDE)));
         }
-        if (c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_HAS_RADIUS)) == 1) {
-            l.setRadius(c.getFloat(c.getColumnIndex(LocationEntry.COLUMN_NAME_RADIUS)));
+        if (c.getInt(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_HAS_RADIUS)) == 1) {
+            l.setRadius(c.getFloat(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_RADIUS)));
         }
-        l.setLatitude(c.getDouble(c.getColumnIndex(LocationEntry.COLUMN_NAME_LATITUDE)));
-        l.setLongitude(c.getDouble(c.getColumnIndex(LocationEntry.COLUMN_NAME_LONGITUDE)));
-        l.setLocationProvider(c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_LOCATION_PROVIDER)));
-        l.setBatchStartMillis(c.getLong(c.getColumnIndex(LocationEntry.COLUMN_NAME_BATCH_START_MILLIS)));
-        l.setStatus(c.getInt(c.getColumnIndex(LocationEntry.COLUMN_NAME_STATUS)));
-        l.setLocationId(c.getLong(c.getColumnIndex(LocationEntry._ID)));
-        l.setMockFlags(c.getInt((c.getColumnIndex(LocationEntry.COLUMN_NAME_MOCK_FLAGS))));
-        l.setBatteryLevel(c.getInt((c.getColumnIndex(LocationEntry.COLUMN_NAME_BATTERY_LEVEL))));
-        l.setIsCharging(c.getInt((c.getColumnIndex(LocationEntry.COLUMN_NAME_BATTERY_LEVEL))) == 1);
+        
+        l.setLatitude(c.getDouble(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_LATITUDE)));
+        l.setLongitude(c.getDouble(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_LONGITUDE)));
+        l.setLocationProvider(c.getInt(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_LOCATION_PROVIDER)));
+        l.setBatchStartMillis(c.getLong(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_BATCH_START_MILLIS)));
+        l.setStatus(c.getInt(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_STATUS)));
+        l.setLocationId(c.getLong(c.getColumnIndexOrThrow(LocationEntry._ID)));
+        l.setMockFlags(c.getInt(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_MOCK_FLAGS)));
+        
+        int btrIdx = c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_BATTERY_LEVEL);
+        l.setBatteryLevel(c.isNull(btrIdx) ? null : c.getInt(btrIdx));
+        
+        l.setIsCharging(c.getInt(c.getColumnIndexOrThrow(LocationEntry.COLUMN_NAME_CHARGING_FLAG)) == 1);
 
         return l;
     }
@@ -194,10 +203,28 @@ public class BackgroundLocation implements Parcelable {
     }
 
     @Override
-    public void writeToParcel(Parcel dest, int flags) {
-        dest.writeLong(locationId);
-        dest.writeInt(locationProvider);
-        dest.writeLong(batchStartMillis);
+    public void writeToParcel(@NonNull Parcel dest, int flags) {
+        if (locationId == null) {
+            dest.writeByte((byte) 0);
+        } else {
+            dest.writeByte((byte) 1);
+            dest.writeLong(locationId);
+        }
+
+        if (locationProvider == null) {
+            dest.writeByte((byte) 0);
+        } else {
+            dest.writeByte((byte) 1);
+            dest.writeInt(locationProvider);
+        }
+
+        if (batchStartMillis == null) {
+            dest.writeByte((byte) 0);
+        } else {
+            dest.writeByte((byte) 1);
+            dest.writeLong(batchStartMillis);
+        }
+
         dest.writeString(provider);
         dest.writeDouble(latitude);
         dest.writeDouble(longitude);
@@ -208,24 +235,35 @@ public class BackgroundLocation implements Parcelable {
         dest.writeFloat(bearing);
         dest.writeDouble(altitude);
         dest.writeFloat(radius);
+        
         dest.writeInt(hasAccuracy ? 1 : 0);
         dest.writeInt(hasAltitude ? 1 : 0);
         dest.writeInt(hasSpeed ? 1 : 0);
         dest.writeInt(hasBearing ? 1 : 0);
         dest.writeInt(hasRadius ? 1 : 0);
+        
         dest.writeInt(mockFlags);
         dest.writeInt(status);
-        dest.writeInt(batteryLevel);
-        dest.writeInt(isCharging ? 1: 0);
+
+        if (batteryLevel == null) {
+            dest.writeByte((byte) 0);
+        } else {
+            dest.writeByte((byte) 1);
+            dest.writeInt(batteryLevel);
+        }
+
+        dest.writeInt(isCharging ? 1 : 0);
         dest.writeLong(realtime);
         dest.writeBundle(extras);
     }
 
     public static final Parcelable.Creator<BackgroundLocation> CREATOR
             = new Parcelable.Creator<BackgroundLocation>() {
+        @Override
         public BackgroundLocation createFromParcel(Parcel in) {
             return BackgroundLocation.fromParcel(in);
         }
+        @Override
         public BackgroundLocation[] newArray(int size) {
             return new BackgroundLocation[size];
         }
@@ -235,514 +273,78 @@ public class BackgroundLocation implements Parcelable {
         return new BackgroundLocation(this);
     }
 
-    /**
-     * Returns locationId if location was stored in db.
-     * @return locationId or null
-     */
-    public Long getLocationId() {
-        return locationId;
-    }
+    public Long getLocationId() { return locationId; }
+    public void setLocationId(Long locationId) { this.locationId = locationId; }
 
+    public Integer getLocationProvider() { return locationProvider; }
+    public void setLocationProvider(Integer locationProvider) { this.locationProvider = locationProvider; }
 
-    /**
-     * Sets locationId
-     * used when location was persisted into db and returned db id is used locationId
-     * @param locationId
-     */
-    public void setLocationId(Long locationId) {
-        this.locationId = locationId;
-    }
+    public Long getBatchStartMillis() { return batchStartMillis; }
+    public void setBatchStartMillis(Long batchStartMillis) { this.batchStartMillis = batchStartMillis; }
 
-    /**
-     * Returns location provider that generated this location.
-     * @return location provider id
-     */
-    public Integer getLocationProvider() {
-        return locationProvider;
-    }
+    public String getProvider() { return provider; }
+    public void setProvider(String provider) { this.provider = provider; }
 
-    /**
-     * Sets the location provider that generated this location.
-     * @param locationProvider
-     */
-    public void setLocationProvider(Integer locationProvider) {
-        this.locationProvider = locationProvider;
-    }
+    public double getLatitude() { return latitude; }
+    public void setLatitude(double latitude) { this.latitude = latitude; }
 
-    /**
-     * Returns batch start time in milliseconds when location is being synced with remote server.
-     * @return batch run time or null
-     */
-    public Long getBatchStartMillis() {
-        return batchStartMillis;
-    }
+    public double getLongitude() { return longitude; }
+    public void setLongitude(double longitude) { this.longitude = longitude; }
 
-    /**
-     * Sets batch start time
-     * @param batch run time in milliseconds
-     */
-    public void setBatchStartMillis(Long batchStartMillis) {
-        this.batchStartMillis = batchStartMillis;
-    }
+    public long getTime() { return time; }
+    public void setTime(long time) { this.time = time; }
 
-    /**
-     * Returns the name of the provider that generated this fix.
-     * @return the provider, or null if it has not been set
-     */
-    public String getProvider() {
-        return provider;
-    }
+    public long getRealTime() { return realtime; }
+    public void setRealTime(long realtime) { this.realtime = realtime; }
 
-    /**
-     * Sets the name of the provider that generated this fix.
-     */
-    public void setProvider(String provider) {
-        this.provider = provider;
-    }
+    public long getElapsedRealtimeNanos() { return elapsedRealtimeNanos; }
+    public void setElapsedRealtimeNanos(long elapsedRealtimeNanos) { this.elapsedRealtimeNanos = elapsedRealtimeNanos; }
 
-    /**
-     * Get the altitude if available, in meters above the WGS 84 reference
-     * ellipsoid.
-     *
-     * <p>If this location does not have an altitude then 0.0 is returned.
-     */
-    public double getLatitude() {
-        return latitude;
-    }
+    public float getAccuracy() { return accuracy; }
+    public void setAccuracy(float accuracy) { this.accuracy = accuracy; this.hasAccuracy = true; }
 
-    /**
-     * Set the altitude, in meters above the WGS 84 reference ellipsoid.
-     *
-     * <p>Following this call {@link #hasAltitude} will return true.
-     */
-    public void setLatitude(double latitude) {
-        this.latitude = latitude;
-    }
+    public float getSpeed() { return speed; }
+    public void setSpeed(float speed) { this.speed = speed; this.hasSpeed = true; }
 
-    /**
-     * Get the longitude, in degrees.
-     *
-     * <p>All locations generated by the {@link LocationManager}
-     * will have a valid longitude.
-     */
-    public double getLongitude() {
-        return longitude;
-    }
+    public float getBearing() { return bearing; }
+    public void setBearing(float bearing) { this.bearing = bearing; this.hasBearing = true; }
 
-    /**
-     * Set the longitude, in degrees.
-     */
-    public void setLongitude(double longitude) {
-        this.longitude = longitude;
-    }
+    public double getAltitude() { return altitude; }
+    public void setAltitude(double altitude) { this.altitude = altitude; this.hasAltitude = true; }
 
+    public float getRadius() { return radius; }
+    public void setRadius(float radius) { this.radius = radius; this.hasRadius = true; }
 
-    /**
-     * Return the UTC time of this fix, in milliseconds since January 1, 1970.
-     *
-     * <p>Note that the UTC time on a device is not monotonic: it
-     * can jump forwards or backwards unpredictably. So always use
-     * {@link #getElapsedRealtimeNanos} when calculating time deltas.
-     *
-     * <p>On the other hand, {@link #getTime} is useful for presenting
-     * a human readable time to the user, or for carefully comparing
-     * location fixes across reboot or across devices.
-     *
-     * <p>All locations generated by the {@link LocationManager}
-     * are guaranteed to have a valid UTC time, however remember that
-     * the system time may have changed since the location was generated.
-     *
-     * @return time of fix, in milliseconds since January 1, 1970.
-     */
-    public long getTime() {
-        return time;
-    }
+    public boolean hasAccuracy() { return hasAccuracy; }
+    public boolean hasAltitude() { return hasAltitude; }
+    public boolean hasSpeed() { return hasSpeed; }
+    public boolean hasBearing() { return hasBearing; }
+    public boolean hasRadius() { return hasRadius; }
 
-    /**
-     * Set the UTC time of this fix, in milliseconds since January 1,
-     * 1970.
-     *
-     * @param time UTC time of this fix, in milliseconds since January 1, 1970
-     */
-    public void setTime(long time) {
-        this.time = time;
-    }
+    public int getMockFlags() { return mockFlags; }
+    public void setMockFlags(int mockFlags) { this.mockFlags = mockFlags; }
 
+    public boolean hasIsFromMockProvider() { return ((mockFlags & 0x0002) >> 1) == 1; }
+    public boolean isFromMockProvider() { return (mockFlags & 0x0001) == 1; }
+    public void setIsFromMockProvider(boolean isFromMockProvider) { mockFlags |= isFromMockProvider ? 0x0003 : 0x0002; }
 
-    /**
-     * Return the UTC time of this fix, in milliseconds since January 1, 1970.
-     *
-     * @return realtime of fix, in milliseconds since January 1, 1970.
-     */
-    public long getRealTime() {
-        return realtime;
-    }
+    public boolean hasMockLocationsEnabled() { return ((mockFlags & 0x0008) >> 3) == 1; }
+    public boolean areMockLocationsEnabled() { return ((mockFlags & 0x0004) >> 2) == 1; }
+    public void setMockLocationsEnabled(Boolean mockLocationsEnabled) { mockFlags |= mockLocationsEnabled ? 0x000C : 0x0008; }
 
-    /**
-     * Set the UTC time of this fix, in milliseconds since January 1,
-     * 1970.
-     *
-     * @param realtime UTC time of this fix, in milliseconds since January 1, 1970
-     */
-    public void setRealTime(long realtime) {
-        this.realtime = realtime;
-    }
+    public int getStatus() { return status; }
+    public void setStatus(int status) { this.status = status; }
 
-    /**
-     * Return the time of this fix, in elapsed real-time since system boot.
-     *
-     * <p>This value can be reliably compared to
-     * {@link android.os.SystemClock#elapsedRealtimeNanos},
-     * to calculate the age of a fix and to compare Location fixes. This
-     * is reliable because elapsed real-time is guaranteed monotonic for
-     * each system boot and continues to increment even when the system
-     * is in deep sleep (unlike {@link #getTime}.
-     *
-     * <p>All locations generated by the {@link LocationManager}
-     * are guaranteed to have a valid elapsed real-time.
-     *
-     * @return elapsed real-time of fix, in nanoseconds since system boot.
-     */
-    public long getElapsedRealtimeNanos() {
-        return elapsedRealtimeNanos;
-    }
+    public Bundle getExtras() { return extras; }
+    public void setExtras(Bundle extras) { this.extras = extras; }
 
-    /**
-     * Set the time of this fix, in elapsed real-time since system boot.
-     *
-     * @param time elapsed real-time of fix, in nanoseconds since system boot.
-     */
-    public void setElapsedRealtimeNanos(long elapsedRealtimeNanos) {
-        this.elapsedRealtimeNanos = elapsedRealtimeNanos;
-    }
+    public Integer getBatteryLevel() { return batteryLevel; }
+    public void setBatteryLevel(Integer batteryLevel) { this.batteryLevel = batteryLevel; }
 
-    /**
-     * Get the estimated accuracy of this location, in meters.
-     *
-     * <p>We define accuracy as the radius of 68% confidence. In other
-     * words, if you draw a circle centered at this location's
-     * latitude and longitude, and with a radius equal to the accuracy,
-     * then there is a 68% probability that the true location is inside
-     * the circle.
-     *
-     * <p>In statistical terms, it is assumed that location errors
-     * are random with a normal distribution, so the 68% confidence circle
-     * represents one standard deviation. Note that in practice, location
-     * errors do not always follow such a simple distribution.
-     *
-     * <p>This accuracy estimation is only concerned with horizontal
-     * accuracy, and does not indicate the accuracy of bearing,
-     * velocity or altitude if those are included in this Location.
-     *
-     * <p>If this location does not have an accuracy, then 0.0 is returned.
-     * All locations generated by the {@link LocationManager} include
-     * an accuracy.
-     */
-    public float getAccuracy() {
-        return accuracy;
-    }
+    public boolean getIsCharging() { return isCharging; }
+    public void setIsCharging(boolean isCharging) { this.isCharging = isCharging; }
 
-    /**
-     * Set the estimated accuracy of this location, meters.
-     *
-     * <p>See {@link #getAccuracy} for the definition of accuracy.
-     *
-     * <p>Following this call {@link #hasAccuracy} will return true.
-     */
-    public void setAccuracy(float accuracy) {
-        this.accuracy = accuracy;
-        this.hasAccuracy = true;
-    }
-
-    /**
-     * Get the speed if it is available, in meters/second over ground.
-     *
-     * <p>If this location does not have a speed then 0.0 is returned.
-     */
-    public float getSpeed() {
-        return speed;
-    }
-
-    /**
-     * Set the speed, in meters/second over ground.
-     *
-     * <p>Following this call {@link #hasSpeed} will return true.
-     */
-    public void setSpeed(float speed) {
-        this.speed = speed;
-        this.hasSpeed = true;
-    }
-
-    /**
-     * Get the bearing, in degrees.
-     *
-     * <p>Bearing is the horizontal direction of travel of this device,
-     * and is not related to the device orientation. It is guaranteed to
-     * be in the range (0.0, 360.0] if the device has a bearing.
-     *
-     * <p>If this location does not have a bearing then 0.0 is returned.
-     */
-    public float getBearing() {
-        return bearing;
-    }
-
-    /**
-     * Set the bearing, in degrees.
-     *
-     * <p>Bearing is the horizontal direction of travel of this device,
-     * and is not related to the device orientation.
-     *
-     * <p>The input will be wrapped into the range (0.0, 360.0].
-     */
-    public void setBearing(float bearing) {
-        this.bearing = bearing;
-        this.hasBearing = true;
-    }
-
-    /**
-     * Get the altitude if available, in meters above the WGS 84 reference
-     * ellipsoid.
-     *
-     * <p>If this location does not have an altitude then 0.0 is returned.
-     */
-    public double getAltitude() {
-        return altitude;
-    }
-
-    /**
-     * Set the altitude, in meters above the WGS 84 reference ellipsoid.
-     *
-     * <p>Following this call {@link #hasAltitude} will return true.
-     */
-    public void setAltitude(double altitude) {
-        this.altitude = altitude;
-        this.hasAltitude = true;
-    }
-
-    /**
-     * Return radius of stationary region.
-     */
-    public float getRadius() {
-        return radius;
-    }
-
-    /**
-     * Sets radius of stationary region.
-     */
-    public void setRadius(float radius) {
-        this.radius = radius;
-        this.hasRadius = true;
-    }
-
-    /**
-     * True if this location has an accuracy.
-     *
-     * <p>All locations generated by the {@link LocationManager} have an
-     * accuracy.
-     */
-    public boolean hasAccuracy() {
-        return hasAccuracy;
-    }
-
-    /**
-     * True if this location has an altitude.
-     */
-    public boolean hasAltitude() {
-        return hasAltitude;
-    }
-
-    /**
-     * True if this location has a speed.
-     */
-    public boolean hasSpeed() {
-        return hasSpeed;
-    }
-
-    /**
-     * True if this location has a bearing.
-     */
-    public boolean hasBearing() {
-        return hasBearing;
-    }
-
-    /**
-     * True if this location has a radius.
-     */
-    public boolean hasRadius() {
-        return hasRadius;
-    }
-
-    /**
-     * Mock flags is 4-bit representation of mock status
-     *
-     * xxx0 - isFromMockProvider is false
-     * xxx1 - isFromMockProvider is true
-     * xx0x - hasIsFromMockProvider is false
-     * xx1x - hasIsFromMockProvider is true
-     * x0xx - areMockLocationsEnabled is false
-     * x1xx - areMockLocationsEnabled is true
-     * 0xxx - hasMockLocationsEnabled is false
-     * 1xxx - hasMockLocationsEnabled is true
-     *
-     * @return mock flags
-     */
-    public int getMockFlags() {
-        return mockFlags;
-    }
-
-    public void setMockFlags(int mockFlags) {
-        this.mockFlags = mockFlags;
-    }
-
-    /**
-     * Return true if method setIsFromMockProvider was called on location instance
-     * @return true indicates that result from isFromMockProvider method is valid
-     */
-    public boolean hasIsFromMockProvider() {
-        return ((mockFlags & 0x0002) >> 1) == 1;
-    }
-
-    /**
-     * Returns true if the Location came from a mock provider.
-     * Always check hasIsFromMockProvider() before this method
-     *
-     * @return true if this Location came from a mock provider, false otherwise
-     */
-    public boolean isFromMockProvider() {
-        return (mockFlags & 0x0001) == 1;
-    }
-
-    /**
-     * Method should be called to indicate that location was recorded by mock provider
-     * If this method was called hasIsFromMockProvider method will always return true
-     *
-     * @param isFromMockProvider
-     */
-    public void setIsFromMockProvider(boolean isFromMockProvider) {
-        mockFlags |= isFromMockProvider ? 0x0003 : 0x0002;
-    }
-
-    /**
-     * Return true if method setMockLocationsEnabled was called on location instance
-     * @return true indicates that result from areMockLocationsEnabled method is valid
-     */
-    public boolean hasMockLocationsEnabled() {
-        return ((mockFlags & 0x0008) >> 3) == 1;
-    }
-
-    /**
-     * Returns true if mock locations were enabled
-     * Always check hasMockLocationsEnabled() before this method
-     *
-     * @return true if mock locations were enabled
-     */
-    public boolean areMockLocationsEnabled() {
-        return ((mockFlags & 0x0004) >> 2) == 1;
-    }
-
-    /**
-     * Method should be called when mock locations were detect in settings
-     * If this method was called hasMockLocationsEnabled method will always return true
-     *
-     * @param mockLocationsEnabled
-     */
-    public void setMockLocationsEnabled(Boolean mockLocationsEnabled) {
-        mockFlags |= mockLocationsEnabled ? 0x000C : 0x0008;
-    }
-
-    /**
-     * Returns status of location. Can be one of:
-     * <ul>
-     *     <li>{@value #DELETED}</li>
-     *     <li>{@value #POST_PENDING}</li>
-     *     <li>{@value #SYNC_PENDING}</li>
-     * </ul>
-     * @return status
-     */
-    public int getStatus() {
-        return status;
-    }
-
-    /**
-     * Sets status of location. Can be one of:
-     * <ul>
-     *     <li>{@value #DELETED}</li>
-     *     <li>{@value #POST_PENDING}</li>
-     *     <li>{@value #SYNC_PENDING}</li>
-     * </ul>
-     * @param status
-     */
-    public void setStatus(int status) {
-        this.status = status;
-    }
-
-    /**
-     * Returns additional provider-specific information about the
-     * location fix as a Bundle.  The keys and values are determined
-     * by the provider.  If no additional information is available,
-     * null is returned.
-     *
-     * <p> A number of common key/value pairs are listed
-     * below. Providers that use any of the keys on this list must
-     * provide the corresponding value as described below.
-     *
-     * <ul>
-     * <li> satellites - the number of satellites used to derive the fix
-     * </ul>
-     */
-    public Bundle getExtras() {
-        return extras;
-    }
-
-    /**
-     * Sets the extra information associated with this fix to the
-     * given Bundle.
-     */
-    public void setExtras(Bundle extras) {
-        this.extras = extras;
-    }
-
-    /**
-     * Returns Battery level
-     * @return batteryLevel or null
-     */
-    public Integer getBatteryLevel() {
-        return batteryLevel;
-    }
-
-
-    /**
-     * Sets batteryLevel
-     * used when location was persisted into db and returned db battery_level is used batteryLevel
-     * @param batteryLevel
-     */
-    public void setBatteryLevel(Integer batteryLevel) {
-        this.batteryLevel = batteryLevel;
-    }
-
-    /**
-     * Returns battery was charging or not
-     * @return isCharging
-     */
-    public boolean getIsCharging() {
-        return isCharging;
-    }
-
-
-    /**
-     * Sets isCharging
-     * used when location was persisted into db and returned db charging_flag is used isCharging
-     * @param isCharging
-     */
-    public void setIsCharging(boolean isCharging) {
-        this.isCharging = isCharging;
-    }
-
-    /**
-     * Return android Location instance
-     *
-     * @return android.location.Location instance
-     */
+    @NonNull
     public Location getLocation() {
         Location l = new Location(provider);
         l.setLatitude(latitude);
@@ -756,152 +358,16 @@ public class BackgroundLocation implements Parcelable {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
             l.setElapsedRealtimeNanos(elapsedRealtimeNanos);
         }
-
         return l;
     }
 
-    // /** Determines whether one Location reading is better than the current Location fix
-    //  *
-    //  * Origin: https://developer.android.com/guide/topics/location/strategies.html
-    //  *
-    //  * @param location  The new Location that you want to evaluate
-    //  * @param currentBestLocation  The current Location fix, to which you want to compare the new one
-    //  */
-    // public static boolean isBetterLocation(BackgroundLocation location, BackgroundLocation currentBestLocation) {
-    //     if (location == null) {
-    //         return false;
-    //     }
-    //     if (currentBestLocation == null) {
-    //         // A new location is always better than no location
-    //         return true;
-    //     }
-
-    //     long timeDeltaInNanos = 0;
-    //     // Check whether the new location fix is newer or older
-    //     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-    //         // because getTime is not monotonic
-    //         timeDeltaInNanos = location.getElapsedRealtimeNanos() - currentBestLocation.getElapsedRealtimeNanos();
-    //     } else {
-    //         // unfortunately there is no other way for pre JELLY_BEAN_MR1 (API Level 17)
-    //         timeDeltaInNanos = (location.getTime() - currentBestLocation.getTime()) * 1000000;
-    //     }
-
-    //     boolean isSignificantlyNewer = timeDeltaInNanos > TWO_MINUTES_IN_NANOS;
-    //     boolean isSignificantlyOlder = timeDeltaInNanos < -TWO_MINUTES_IN_NANOS;
-    //     boolean isNewer = timeDeltaInNanos > 0;
-
-    //     // If it's been more than two minutes since the current location, use the new location
-    //     // because the user has likely moved
-    //     if (isSignificantlyNewer) {
-    //         return true;
-    //         // If the new location is more than two minutes older, it must be worse
-    //     } else if (isSignificantlyOlder) {
-    //         return false;
-    //     }
-
-    //     // Check whether the new location fix is more or less accurate
-    //     int accuracyDelta = (int) (location.getAccuracy() - currentBestLocation.getAccuracy());
-    //     boolean isLessAccurate = accuracyDelta > 0;
-    //     boolean isMoreAccurate = accuracyDelta < 0;
-    //     boolean isSignificantlyLessAccurate = accuracyDelta > 200;
-
-    //     // Check if the old and new location are from the same provider
-    //     boolean isFromSameProvider = isSameProvider(location.getProvider(),
-    //             currentBestLocation.getProvider());
-
-    //     // Determine location quality using a combination of timeliness and accuracy
-    //     if (isMoreAccurate) {
-    //         return true;
-    //     } else if (isNewer && !isLessAccurate) {
-    //         return true;
-    //     } else if (isNewer && !isSignificantlyLessAccurate && isFromSameProvider) {
-    //         return true;
-    //     }
-    //     return false;
-    // }
-
-    // /**
-    //  * Check if given location is better that instance
-    //  * @param location to compare is android Location
-    //  * @return true if location is better and false if not
-    //  */
-    // public boolean isBetterLocationThan(Location location) {
-    //     if (location == null) {
-    //         return true;
-    //     }
-    //     return !isBetterLocation(new BackgroundLocation(location), this);
-    // }
-
-    // /**
-    //  * Check if given location is better that instance
-    //  * @param location to compare
-    //  * @return true if location is better and false if not
-    //  */
-    // public boolean isBetterLocationThan(BackgroundLocation location) {
-    //     if (location == null) {
-    //         return true;
-    //     }
-    //     return !isBetterLocation(location, this);
-    // }
-
-    /** Checks whether two providers are the same */
-    private static boolean isSameProvider(String provider1, String provider2) {
-        if (provider1 == null) {
-            return provider2 == null;
-        }
-        return provider1.equals(provider2);
-    }
-
+    @NonNull
     @Override
-    public String toString () {
-        StringBuilder s = new StringBuilder();
-        s.append("BGLocation[").append(provider);
-        s.append(String.format(" %.6f,%.6f", latitude, longitude));
-        s.append(" id=").append(locationId);
-        if (hasAccuracy) {
-            s.append(String.format(" acc=%.0f", accuracy));
-        } else {
-            s.append(" acc=???");
-        }
-        if (time == 0) {
-            s.append(" t=?!?");
-        } else {
-            s.append(" t=").append(time);
-        }
-
-        if (realtime == 0) {
-            s.append(" rt=?!?");
-        } else {
-            s.append(" rt=").append(realtime);
-        }
-
-        if (elapsedRealtimeNanos == 0) {
-            s.append(" et=?!?");
-        } else {
-            s.append(" et=");
-            TimeUtils.formatDuration(elapsedRealtimeNanos / 1000000L, s);
-        }
-        if (hasAltitude) s.append(" alt=").append(altitude);
-        if (hasSpeed) s.append(" vel=").append(speed);
-        if (hasBearing) s.append(" bear=").append(bearing);
-        if (hasRadius) s.append(" radius=").append(radius);
-        if (isFromMockProvider()) s.append(" mock");
-        if (areMockLocationsEnabled()) s.append(" mocksEnabled");
-        if (extras != null) {
-            s.append(" {").append(extras).append('}');
-        }
-        s.append(" locprov=").append(locationProvider);
-        s.append(" btrLvl=").append(batteryLevel);
-        if(isCharging) s.append(" charging");
-        s.append("]");
-
-        return s.toString();
+    public String toString() {
+        return "BGLocation[" + provider + String.format(" %.6f,%.6f", latitude, longitude) + " id=" + locationId + "]";
     }
 
-    /**
-     * Returns location as JSON object.
-     * @throws JSONException
-     */
+    @NonNull
     public JSONObject toJSONObject() throws JSONException {
         JSONObject json = new JSONObject();
         json.put("provider", provider);
@@ -916,32 +382,22 @@ public class BackgroundLocation implements Parcelable {
         if (hasRadius) json.put("radius", radius);
         if (hasIsFromMockProvider()) json.put("isFromMockProvider", isFromMockProvider());
         if (hasMockLocationsEnabled()) json.put("mockLocationsEnabled", areMockLocationsEnabled());
-
         json.put("batteryLevel", batteryLevel);
         json.put("isCharging", isCharging);
         json.put("realtime", realtime);
         return json;
     }
 
-    /**
-     * Returns location as JSON object containing location id
-     * Note: Location id is not unique and is usually being recycled when
-     * maximum number of locations is stored.
-     *
-     * @throws JSONException
-     */
+    @NonNull
     public JSONObject toJSONObjectWithId() throws JSONException {
         JSONObject json = toJSONObject();
         json.put("id", locationId);
         return json;
     }
 
-    /**
-     * Return the contentvalues for this record
-     */
+    @NonNull
     public ContentValues toContentValues() {
         ContentValues values = new ContentValues();
-        //values.put(LocationEntry._ID, locationId);
         values.put(LocationEntry.COLUMN_NAME_TIME, time);
         values.put(LocationEntry.COLUMN_NAME_ACCURACY, accuracy);
         values.put(LocationEntry.COLUMN_NAME_SPEED, speed);
@@ -967,59 +423,33 @@ public class BackgroundLocation implements Parcelable {
         return values;
     }
 
-    public Object getValueForKey(String key) {
-        if ("@id".equals(key)) {
-            return locationId;
-        }
-        if ("@provider".equals(key)) {
-            return provider;
-        }
-        if ("@locationProvider".equals(key)) {
-            return locationProvider;
-        }
-        if ("@time".equals(key)) {
-            return time;
-        }
-        if ("@realtime".equals(key)) {
-            return realtime;
-        }
-        if ("@elapsedrealtimenano".equals(key)) {
-            return elapsedRealtimeNanos;
-        }
-        if ("@latitude".equals(key)) {
-            return latitude;
-        }
-        if ("@longitude".equals(key)) {
-            return longitude;
-        }
-        if ("@accuracy".equals(key)) {
-            return hasAccuracy ? accuracy : JSONObject.NULL;
-        }
-        if ("@speed".equals(key)) {
-            return hasSpeed ? speed : JSONObject.NULL;
-        }
-        if ("@altitude".equals(key)) {
-            return hasAltitude ? altitude : JSONObject.NULL;
-        }
-        if ("@bearing".equals(key)) {
-            return hasBearing ? bearing : JSONObject.NULL;
-        }
-        if ("@radius".equals(key)) {
-            return hasRadius ? radius : JSONObject.NULL;
-        }
-        if ("@isFromMockProvider".equals(key)) {
-            return hasIsFromMockProvider() ? isFromMockProvider() : JSONObject.NULL;
-        }
-        if ("@mockLocationsEnabled".equals(key)) {
-            return hasMockLocationsEnabled() ? areMockLocationsEnabled() : JSONObject.NULL;
-        }
-        if ("@batteryLevel".equals(key)) {
-            return batteryLevel;
-        }
-        if ("@isCharging".equals(key)) {
-            return isCharging;
-        }
+    private interface PropertyAccessor {
+        Object get(BackgroundLocation loc);
+    }
 
-        return null;
+    static {
+        ACCESSOR_MAP.put("@id", loc -> loc.locationId);
+        ACCESSOR_MAP.put("@provider", loc -> loc.provider);
+        ACCESSOR_MAP.put("@locationProvider", loc -> loc.locationProvider);
+        ACCESSOR_MAP.put("@time", loc -> loc.time);
+        ACCESSOR_MAP.put("@realtime", loc -> loc.realtime);
+        ACCESSOR_MAP.put("@elapsedrealtimenano", loc -> loc.elapsedRealtimeNanos);
+        ACCESSOR_MAP.put("@latitude", loc -> loc.latitude);
+        ACCESSOR_MAP.put("@longitude", loc -> loc.longitude);
+        ACCESSOR_MAP.put("@accuracy", loc -> loc.hasAccuracy ? loc.accuracy : JSONObject.NULL);
+        ACCESSOR_MAP.put("@speed", loc -> loc.hasSpeed ? loc.speed : JSONObject.NULL);
+        ACCESSOR_MAP.put("@altitude", loc -> loc.hasAltitude ? loc.altitude : JSONObject.NULL);
+        ACCESSOR_MAP.put("@bearing", loc -> loc.hasBearing ? loc.bearing : JSONObject.NULL);
+        ACCESSOR_MAP.put("@radius", loc -> loc.hasRadius ? loc.radius : JSONObject.NULL);
+        ACCESSOR_MAP.put("@isFromMockProvider", loc -> loc.hasIsFromMockProvider() ? loc.isFromMockProvider() : JSONObject.NULL);
+        ACCESSOR_MAP.put("@mockLocationsEnabled", loc -> loc.hasMockLocationsEnabled() ? loc.areMockLocationsEnabled() : JSONObject.NULL);
+        ACCESSOR_MAP.put("@batteryLevel", loc -> loc.batteryLevel);
+        ACCESSOR_MAP.put("@isCharging", loc -> loc.isCharging);
+    }
+
+    @Nullable
+    public Object getValueForKey(@NonNull String key) {
+        PropertyAccessor accessor = ACCESSOR_MAP.get(key);
+        return accessor != null ? accessor.get(this) : null;
     }
 }

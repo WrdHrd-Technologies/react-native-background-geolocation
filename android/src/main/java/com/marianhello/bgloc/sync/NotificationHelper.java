@@ -9,74 +9,106 @@ import android.content.Intent;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.os.Build;
+import android.util.Log;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.core.app.NotificationCompat;
 
 import com.marianhello.bgloc.ResourceResolver;
 import com.marianhello.logging.LoggerManager;
 
-public class NotificationHelper {
-    public static final String SERVICE_CHANNEL_ID = "bglocservice";
-    // https://github.com/nishkarsh/android-permissions/blob/master/src/main/java/com/intentfilter/androidpermissions/services/NotificationService.java#L15
-    public static final String ANDROID_PERMISSIONS_CHANNEL_ID = "android-permissions";
+public final class NotificationHelper {
+    private static final String TAG = "NotificationHelper";
 
+    public static final String SERVICE_CHANNEL_ID = "bglocservice";
+    public static final String ANDROID_PERMISSIONS_CHANNEL_ID = "android-permissions";
     public static final String SYNC_CHANNEL_ID = "syncservice";
+    
     public static final String SYNC_CHANNEL_NAME = "Sync Service";
     public static final String SYNC_CHANNEL_DESCRIPTION = "Shows sync progress";
 
+    private NotificationHelper() {
+        throw new UnsupportedOperationException("Notification utility configuration layers cannot be instantiated.");
+    }
+
     public static class NotificationFactory {
-        private Context mContext;
-        private ResourceResolver mResolver;
+        private final Context mContext;
+        private final ResourceResolver mResolver;
+        private final org.slf4j.Logger logger;
 
-        private org.slf4j.Logger logger;
-
-        public NotificationFactory(Context context) {
-            mContext = context;
-            mResolver = ResourceResolver.newInstance(context);
-            logger =  LoggerManager.getLogger(NotificationFactory.class);
+        public NotificationFactory(@NonNull Context context) {
+            this.mContext = context.getApplicationContext();
+            this.mResolver = ResourceResolver.newInstance(mContext);
+            this.logger = LoggerManager.getLogger(NotificationFactory.class);
         }
 
-        private Integer parseNotificationIconColor(String color) {
-            int iconColor = 0;
-            if (color != null) {
-                try {
-                    iconColor = Color.parseColor(color);
-                } catch (IllegalArgumentException e) {
-                    logger.error("Couldn't parse color from android options");
+        @Nullable
+        private Integer parseNotificationIconColor(@Nullable String color) {
+            if (color == null || color.trim().isEmpty()) return null;
+            try {
+                return Color.parseColor(color);
+            } catch (IllegalArgumentException e) {
+                logger.error("Failed to decode requested string color mapping array from background options: {}", color);
+                return null;
+            }
+        }
+
+        @NonNull
+        public Notification getNotification(@Nullable String title, @Nullable String text, @Nullable String largeIcon, @Nullable String smallIcon, @Nullable String color) {
+            Context appContext = mContext;
+
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(appContext, NotificationHelper.SERVICE_CHANNEL_ID);
+
+            builder.setContentTitle(title != null ? title : "")
+                   .setContentText(text != null ? text : "");
+
+            int smallIconResId = 0;
+            if (smallIcon != null && !smallIcon.isEmpty()) {
+                smallIconResId = mResolver.getDrawable(smallIcon);
+            }
+            
+            if (smallIconResId != 0) {
+                builder.setSmallIcon(smallIconResId);
+            } else {
+                int defaultAppIcon = appContext.getApplicationInfo().icon;
+                builder.setSmallIcon(defaultAppIcon != 0 ? defaultAppIcon : android.R.drawable.sym_def_app_icon);
+            }
+
+            if (largeIcon != null && !largeIcon.isEmpty()) {
+                int largeIconResId = mResolver.getDrawable(largeIcon);
+                if (largeIconResId != 0) {
+                    try {
+                        builder.setLargeIcon(BitmapFactory.decodeResource(appContext.getResources(), largeIconResId));
+                    } catch (Exception e) {
+                        Log.w(TAG, "Failed to compile large icon resource descriptor layer layout bounds.", e);
+                    }
                 }
             }
-            return iconColor;
-        }
 
-        public Notification getNotification(String title, String text, String largeIcon, String smallIcon, String color) {
-            Context appContext = mContext.getApplicationContext();
-
-            // Build a Notification required for running service in foreground.
-            NotificationCompat.Builder builder = new NotificationCompat.Builder(mContext, NotificationHelper.SERVICE_CHANNEL_ID);
-
-            builder.setContentTitle(title);
-            builder.setContentText(text);
-            if (smallIcon != null && !smallIcon.isEmpty()) {
-                builder.setSmallIcon(mResolver.getDrawable(smallIcon));
-            } else {
-                builder.setSmallIcon(android.R.drawable.ic_menu_mylocation);
-            }
-            if (largeIcon != null && !largeIcon.isEmpty()) {
-                builder.setLargeIcon(BitmapFactory.decodeResource(appContext.getResources(), mResolver.getDrawable(largeIcon)));
-            }
-            if (color != null && !color.isEmpty()) {
-                builder.setColor(this.parseNotificationIconColor(color));
+            Integer decodedColor = parseNotificationIconColor(color);
+            if (decodedColor != null) {
+                builder.setColor(decodedColor);
             }
 
-            // Add an onclick handler to the notification
             String packageName = appContext.getPackageName();
             Intent launchIntent = appContext.getPackageManager().getLaunchIntentForPackage(packageName);
             if (launchIntent != null) {
-                // NOTICE: testing apps might not have registered launch intent
                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                PendingIntent contentIntent = PendingIntent.getActivity(appContext, 0, launchIntent, PendingIntent.FLAG_CANCEL_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                
+                int pendingIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    pendingIntentFlags |= PendingIntent.FLAG_IMMUTABLE;
+                }
+                
+                PendingIntent contentIntent = PendingIntent.getActivity(appContext, 0, launchIntent, pendingIntentFlags);
                 builder.setContentIntent(contentIntent);
             }
+
+            builder.setOngoing(true)
+                   .setLocalOnly(true)
+                   .setShowWhen(true);
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 builder.setCategory(Notification.CATEGORY_NAVIGATION);
@@ -86,61 +118,65 @@ public class NotificationHelper {
                 builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE);
             }
 
-            Notification notification = builder.build();
-            notification.flags |= Notification.FLAG_ONGOING_EVENT | Notification.FLAG_FOREGROUND_SERVICE | Notification.FLAG_NO_CLEAR;
-
-            return notification;
+            return builder.build();
         }
     }
 
-    public static void registerAllChannels(Context context) {
+    public static void registerAllChannels(@NonNull Context context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            String appName = ResourceResolver.newInstance(context).getString(("app_name"));
-            // Create the NotificationChannel, but only on API 26+ because
-            // the NotificationChannel class is new and not in the support library
-            android.app.NotificationManager notificationManager = (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-            notificationManager.createNotificationChannel(createServiceChannel(appName));
-            notificationManager.createNotificationChannel(createSyncChannel());
-            notificationManager.createNotificationChannel(createAndroidPermissionsChannel(appName));
+            NotificationManager notificationManager = (NotificationManager) context.getApplicationContext().getSystemService(Context.NOTIFICATION_SERVICE);
+            if (notificationManager != null) {
+                String appName = ResourceResolver.newInstance(context).getString("app_name");
+                notificationManager.createNotificationChannel(createServiceChannel(appName));
+                notificationManager.createNotificationChannel(createSyncChannel());
+                notificationManager.createNotificationChannel(createAndroidPermissionsChannel(appName));
+            }
         }
     }
 
-    public static void registerServiceChannel(Context context) {
+    public static void registerServiceChannel(@NonNull Context context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            String appName = ResourceResolver.newInstance(context).getString(("app_name"));
-            // Create the NotificationChannel, but only on API 26+ because
-            // the NotificationChannel class is new and not in the support library
-            android.app.NotificationManager notificationManager = (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-            notificationManager.createNotificationChannel(createServiceChannel(appName));
+            NotificationManager notificationManager = (NotificationManager) context.getApplicationContext().getSystemService(Context.NOTIFICATION_SERVICE);
+            if (notificationManager != null) {
+                String appName = ResourceResolver.newInstance(context).getString("app_name");
+                notificationManager.createNotificationChannel(createServiceChannel(appName));
+            }
         }
     }
 
-    public static void registerSyncChannel(Context context) {
+    public static void registerSyncChannel(@NonNull Context context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // Create the NotificationChannel, but only on API 26+ because
-            // the NotificationChannel class is new and not in the support library
-            android.app.NotificationManager notificationManager = (android.app.NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-            notificationManager.createNotificationChannel(createSyncChannel());
+            NotificationManager notificationManager = (NotificationManager) context.getApplicationContext().getSystemService(Context.NOTIFICATION_SERVICE);
+            if (notificationManager != null) {
+                notificationManager.createNotificationChannel(createSyncChannel());
+            }
         }
     }
 
+    @NonNull
     @RequiresApi(api = Build.VERSION_CODES.O)
     public static NotificationChannel createServiceChannel(CharSequence name) {
-        NotificationChannel channel = new NotificationChannel(SERVICE_CHANNEL_ID, name, android.app.NotificationManager.IMPORTANCE_LOW);
+        NotificationChannel channel = new NotificationChannel(SERVICE_CHANNEL_ID, name, NotificationManager.IMPORTANCE_LOW);
         channel.enableVibration(false);
+        channel.setSound(null, null);
+        channel.setShowBadge(false);
         return channel;
     }
 
+    @NonNull
     @RequiresApi(api = Build.VERSION_CODES.O)
-    public static NotificationChannel createSyncChannel(){
+    public static NotificationChannel createSyncChannel() {
         NotificationChannel channel = new NotificationChannel(SYNC_CHANNEL_ID, SYNC_CHANNEL_NAME, NotificationManager.IMPORTANCE_LOW);
         channel.setDescription(SYNC_CHANNEL_DESCRIPTION);
         channel.enableVibration(false);
+        channel.setSound(null, null);
+        channel.setShowBadge(false);
         return channel;
     }
 
+    @NonNull
     @RequiresApi(api = Build.VERSION_CODES.O)
-    public static NotificationChannel createAndroidPermissionsChannel(CharSequence name ){
+    public static NotificationChannel createAndroidPermissionsChannel(CharSequence name) {
         NotificationChannel channel = new NotificationChannel(ANDROID_PERMISSIONS_CHANNEL_ID, name, NotificationManager.IMPORTANCE_HIGH);
         channel.enableVibration(false);
         return channel;

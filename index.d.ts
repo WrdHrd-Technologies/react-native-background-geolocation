@@ -921,6 +921,10 @@ export interface BackgroundGeolocationPlugin {
   ): void;
   
   startAutostartSettings() : void;
+  checkAutoStartSupport(
+    success: (supported: boolean) => void,
+    fail?: (error: BackgroundGeolocationError) => void
+  ): void;
 }
 
 declare const BackgroundGeolocation: BackgroundGeolocationPlugin;

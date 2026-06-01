@@ -1,60 +1,69 @@
-/*
- * Copyright (C) 2006 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package ru.andremoniy.utils;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import java.util.Iterator;
 
-public class TextUtils {
+
+public final class TextUtils {
     private static final String TAG = "TextUtils";
 
-    /**
-     * Returns a string containing the tokens joined by delimiters.
-     * @param tokens an array objects to be joined. Strings will be formed from
-     *     the objects by calling object.toString().
-     */
-    public static String join(CharSequence delimiter, Object[] tokens) {
-        StringBuilder sb = new StringBuilder();
+    private TextUtils() {
+        throw new UnsupportedOperationException("Utility infrastructure class cannot be instantiated.");
+    }
+
+    @NonNull
+    public static String join(@Nullable CharSequence delimiter, @Nullable Object[] tokens) {
+        if (tokens == null || tokens.length == 0) {
+            return "";
+        }
+
+        CharSequence safeDelimiter = (delimiter != null) ? delimiter : "";
+
+        int estimatedSize = (tokens.length * 16) + (tokens.length * safeDelimiter.length());
+        StringBuilder sb = new StringBuilder(estimatedSize);
+
         boolean firstTime = true;
-        for (Object token: tokens) {
+        for (Object token : tokens) {
+            if (token == null) continue;
+
             if (firstTime) {
                 firstTime = false;
             } else {
-                sb.append(delimiter);
+                sb.append(safeDelimiter);
             }
             sb.append(token);
         }
         return sb.toString();
     }
 
-    /**
-     * Returns a string containing the tokens joined by delimiters.
-     * @param tokens an array objects to be joined. Strings will be formed from
-     *     the objects by calling object.toString().
-     */
-    public static String join(CharSequence delimiter, Iterable tokens) {
-        StringBuilder sb = new StringBuilder();
+    @NonNull
+    public static String join(@Nullable CharSequence delimiter, @Nullable Iterable<?> tokens) {
+        if (tokens == null) {
+            return "";
+        }
+
         Iterator<?> it = tokens.iterator();
-        if (it.hasNext()) {
-            sb.append(it.next());
-            while (it.hasNext()) {
-                sb.append(delimiter);
-                sb.append(it.next());
+        if (!it.hasNext()) {
+            return "";
+        }
+
+        CharSequence safeDelimiter = (delimiter != null) ? delimiter : "";
+        
+        StringBuilder sb = new StringBuilder(256);
+
+        boolean firstTime = true;
+        while (it.hasNext()) {
+            Object token = it.next();
+            if (token == null) continue;
+
+            if (firstTime) {
+                firstTime = false;
+            } else {
+                sb.append(safeDelimiter);
             }
+            sb.append(token);
         }
         return sb.toString();
     }

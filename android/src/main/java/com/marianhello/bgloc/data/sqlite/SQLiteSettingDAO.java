@@ -5,19 +5,17 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.util.Log;
-import com.marianhello.bgloc.Setting;
-import com.marianhello.bgloc.data.ConfigurationDAO;
-import com.marianhello.bgloc.data.SettingDAO;
 
-import org.json.JSONException;
+import com.marianhello.bgloc.Setting;
+import com.marianhello.bgloc.data.SettingDAO;
+import com.marianhello.bgloc.data.sqlite.SQLiteSettingContract.SettingEntry;
 
 public class SQLiteSettingDAO implements SettingDAO {
-    private static final String TAG = SQLiteSettingDAO.class.getName();
-
-    private SQLiteDatabase db;
+    private static final String TAG = "SQLiteSettingDAO";
+    private final SQLiteDatabase db;
 
     public SQLiteSettingDAO(Context context) {
-        SQLiteOpenHelper helper = SQLiteOpenHelper.getHelper(context);
+        SQLiteOpenHelper helper = SQLiteOpenHelper.getHelper(context.getApplicationContext());
         this.db = helper.getWritableDatabase();
     }
 
@@ -25,65 +23,65 @@ public class SQLiteSettingDAO implements SettingDAO {
         this.db = db;
     }
 
-    public Setting retrieveSetting() throws JSONException {
-        Cursor cursor = null;
+    private static final String[] COLUMNS = {
+            SettingEntry._ID,               
+            SettingEntry.COLUMN_NAME_START,        
+            SettingEntry.COLUMN_NAME_UPDATED_AT   
+    };
 
-        String[] columns = {
-                SQLiteSettingContract.SettingEntry._ID,
-                SQLiteSettingContract.SettingEntry.COLUMN_NAME_START,
-                SQLiteSettingContract.SettingEntry.COLUMN_NAME_UPDATED_AT,
-        };
-
-        String whereClause = null;
-        String[] whereArgs = null;
-        String groupBy = null;
-        String having = null;
-        String orderBy = null;
-
+    @Override
+    public Setting retrieveSetting() {
         Setting setting = null;
-        try {
-            cursor = db.query(
-                    SQLiteSettingContract.SettingEntry.TABLE_NAME,  // The table to query
-                    columns,                   // The columns to return
-                    whereClause,               // The columns for the WHERE clause
-                    whereArgs,                 // The values for the WHERE clause
-                    groupBy,                   // don't group the rows
-                    having,                    // don't filter by row groups
-                    orderBy                    // The sort order
-            );
-            if (cursor.moveToFirst()) {
+
+        try (Cursor cursor = db.query(
+                SettingEntry.TABLE_NAME,
+                COLUMNS,
+                null,
+                null,
+                null,
+                null,
+                null
+        )) {
+            if (cursor != null && cursor.moveToFirst()) {
                 setting = hydrate(cursor);
             }
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
+        } catch (Exception e) {
+            Log.e(TAG, "Fatal error encountered during tracking state profile retrieval.", e);
         }
+
         return setting;
     }
 
-    public boolean persistSetting(Setting setting) throws NullPointerException {
-        long rowId = db.replace(SQLiteSettingContract.SettingEntry.TABLE_NAME, SQLiteSettingContract.SettingEntry.COLUMN_NAME_NULLABLE, getContentValues(setting));
-        Log.d(TAG, "Configuration persisted with rowId = " + rowId);
-        if (rowId > -1) {
-            return true;
-        } else {
+    @Override
+    public boolean persistSetting(Setting setting) {
+        if (setting == null) return false;
+
+        try {
+            ContentValues values = getContentValues(setting);
+            long rowId = db.replace(SettingEntry.TABLE_NAME, SettingEntry.COLUMN_NAME_NULLABLE, values);
+            Log.d(TAG, "Tracking engine operational state persisted under instance row ID: " + rowId);
+            return rowId > -1;
+        } catch (Exception e) {
+            Log.e(TAG, "Settings write transaction rejected by underlying database engine.", e);
             return false;
         }
     }
 
-    private Setting hydrate(Cursor c) throws JSONException {
+    private Setting hydrate(Cursor c) {
         Setting setting = Setting.getDefault();
-        setting.setStarted(c.getInt(c.getColumnIndex(SQLiteSettingContract.SettingEntry.COLUMN_NAME_START)) == 1);
-        setting.setUpdatedAt(c.getInt(c.getColumnIndex(SQLiteSettingContract.SettingEntry.COLUMN_NAME_UPDATED_AT)));
+        
+        setting.setStarted(c.getInt(1) == 1);
+        
+        setting.setUpdatedAt(c.getLong(2));
+        
         return setting;
     }
 
-    private ContentValues getContentValues(Setting setting) throws NullPointerException {
+    private ContentValues getContentValues(Setting setting) {
         ContentValues values = new ContentValues();
-        values.put(SQLiteSettingContract.SettingEntry._ID, 1);
-        values.put(SQLiteSettingContract.SettingEntry.COLUMN_NAME_START,  (setting.isStarted() == true) ? 1 : 0);
-        values.put(SQLiteSettingContract.SettingEntry.COLUMN_NAME_UPDATED_AT, setting.getUpdatedAt());
+        values.put(SettingEntry._ID, 1);
+        values.put(SettingEntry.COLUMN_NAME_START, setting.isStarted() ? 1 : 0);
+        values.put(SettingEntry.COLUMN_NAME_UPDATED_AT, setting.getUpdatedAt());
         return values;
     }
 }

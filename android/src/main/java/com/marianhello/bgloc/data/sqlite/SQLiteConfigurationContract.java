@@ -7,12 +7,13 @@ import static com.marianhello.bgloc.data.sqlite.SQLiteOpenHelper.INTEGER_TYPE;
 import static com.marianhello.bgloc.data.sqlite.SQLiteOpenHelper.REAL_TYPE;
 import static com.marianhello.bgloc.data.sqlite.SQLiteOpenHelper.TEXT_TYPE;
 
-public final class SQLiteConfigurationContract {
-    // To prevent someone from accidentally instantiating the contract class,
-    // give it an empty constructor.
-    public SQLiteConfigurationContract() {}
 
-    /* Inner class that defines the table contents */
+public final class SQLiteConfigurationContract {
+    
+    private SQLiteConfigurationContract() {
+        throw new UnsupportedOperationException("Contract schema definition utility layer cannot be instantiated.");
+    }
+
     public static abstract class ConfigurationEntry implements BaseColumns {
         public static final String TABLE_NAME = "configuration";
         public static final String COLUMN_NAME_NULLABLE = "NULLHACK";
@@ -45,31 +46,31 @@ public final class SQLiteConfigurationContract {
         public static final String SQL_CREATE_CONFIG_TABLE =
                 "CREATE TABLE " + ConfigurationEntry.TABLE_NAME + " (" +
                         ConfigurationEntry._ID + " INTEGER PRIMARY KEY," +
-                        ConfigurationEntry.COLUMN_NAME_RADIUS + REAL_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_DISTANCE_FILTER + INTEGER_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_DESIRED_ACCURACY + INTEGER_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_DEBUG + INTEGER_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_NOTIF_TITLE + TEXT_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_NOTIF_TEXT + TEXT_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_NOTIF_ICON_SMALL + TEXT_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_NOTIF_ICON_LARGE + TEXT_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_NOTIF_COLOR + TEXT_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_STOP_TERMINATE + INTEGER_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_STOP_ON_STILL + INTEGER_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_START_BOOT + INTEGER_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_START_FOREGROUND + INTEGER_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_NOTIFICATIONS_ENABLED + INTEGER_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_LOCATION_PROVIDER + TEXT_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_INTERVAL + INTEGER_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_FASTEST_INTERVAL + INTEGER_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_ACTIVITIES_INTERVAL + INTEGER_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_URL + TEXT_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_SYNC_URL + TEXT_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_SYNC_THRESHOLD + INTEGER_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_HEADERS + TEXT_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_MAX_LOCATIONS + INTEGER_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_TEMPLATE + TEXT_TYPE + COMMA_SEP +
-                        ConfigurationEntry.COLUMN_NAME_HEARTBEAT_INTERVAL + INTEGER_TYPE +
+                        ConfigurationEntry.COLUMN_NAME_RADIUS + " " + REAL_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_DISTANCE_FILTER + " " + INTEGER_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_DESIRED_ACCURACY + " " + INTEGER_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_DEBUG + " " + INTEGER_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_NOTIF_TITLE + " " + TEXT_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_NOTIF_TEXT + " " + TEXT_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_NOTIF_ICON_SMALL + " " + TEXT_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_NOTIF_ICON_LARGE + " " + TEXT_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_NOTIF_COLOR + " " + TEXT_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_STOP_TERMINATE + " " + INTEGER_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_STOP_ON_STILL + " " + INTEGER_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_START_BOOT + " " + INTEGER_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_START_FOREGROUND + " " + INTEGER_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_NOTIFICATIONS_ENABLED + " " + INTEGER_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_LOCATION_PROVIDER + " " + TEXT_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_INTERVAL + " " + INTEGER_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_FASTEST_INTERVAL + " " + INTEGER_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_ACTIVITIES_INTERVAL + " " + INTEGER_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_URL + " " + TEXT_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_SYNC_URL + " " + TEXT_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_SYNC_THRESHOLD + " " + INTEGER_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_HEADERS + " " + TEXT_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_MAX_LOCATIONS + " " + INTEGER_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_TEMPLATE + " " + TEXT_TYPE + COMMA_SEP +
+                        ConfigurationEntry.COLUMN_NAME_HEARTBEAT_INTERVAL + " " + INTEGER_TYPE +
                         " )";
 
         public static final String SQL_DROP_CONFIG_TABLE =

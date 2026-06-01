@@ -1,9 +1,7 @@
 package com.marianhello.bgloc;
 
-import static com.marianhello.bgloc.data.BackgroundLocation.SYNC_PENDING;
 
 import android.Manifest;
-import android.annotation.TargetApi;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -13,7 +11,6 @@ import android.location.Location;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.SystemClock;
 import android.provider.Settings;
 import android.provider.Settings.SettingNotFoundException;
 import androidx.core.content.ContextCompat;
@@ -32,10 +29,7 @@ import com.github.jparkie.promise.Promise;
 import com.intentfilter.androidpermissions.PermissionManager;
 import com.marianhello.bgloc.data.BackgroundActivity;
 import com.marianhello.bgloc.data.BackgroundLocation;
-import com.marianhello.bgloc.data.ConfigurationDAO;
 import com.marianhello.bgloc.data.DAOFactory;
-import com.marianhello.bgloc.data.LocationDAO;
-import com.marianhello.bgloc.data.SettingDAO;
 import com.marianhello.bgloc.provider.LocationProvider;
 import com.marianhello.bgloc.service.LocationService;
 import com.marianhello.bgloc.service.LocationServiceImpl;
@@ -62,14 +56,16 @@ public class BackgroundGeolocationFacade {
     public static final int AUTHORIZATION_AUTHORIZED = 1;
     public static final int AUTHORIZATION_DENIED = 0;
 
+    // Permissions requested initially while the app is in foreground
     public static final String[] INITIALPERMISSIONS = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ? new String[]{
             Manifest.permission.ACTIVITY_RECOGNITION,
             Manifest.permission.ACCESS_COARSE_LOCATION,
             Manifest.permission.ACCESS_FINE_LOCATION
-    }:  new String[]{
+    } : new String[]{
             Manifest.permission.ACCESS_COARSE_LOCATION,
             Manifest.permission.ACCESS_FINE_LOCATION
     };
+
     public static final String[] BACKGROUNDLOCATIONPERMISSION = new String[]{
             Manifest.permission.ACCESS_BACKGROUND_LOCATION
     };
@@ -79,12 +75,10 @@ public class BackgroundGeolocationFacade {
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_BACKGROUND_LOCATION,
             Manifest.permission.ACTIVITY_RECOGNITION
-    }
-            :
-            new String[]{
-                    Manifest.permission.ACCESS_COARSE_LOCATION,
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-            };
+    } : new String[]{
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+    };
 
     private boolean mServiceBroadcastReceiverRegistered = false;
     private boolean mLocationModeChangeReceiverRegistered = false;
@@ -95,208 +89,168 @@ public class BackgroundGeolocationFacade {
     private final Context mContext;
     private final PluginDelegate mDelegate;
     private final LocationService mService;
-
     private BackgroundLocation mStationaryLocation;
-
     private org.slf4j.Logger logger;
 
     public BackgroundGeolocationFacade(Context context, PluginDelegate delegate) {
         mContext = context;
         mDelegate = delegate;
-
         mService = new LocationServiceProxy(context);
 
         UncaughtExceptionLogger.register(context.getApplicationContext());
-
         logger = LoggerManager.getLogger(BackgroundGeolocationFacade.class);
         LoggerManager.enableDBLogging();
 
-        logger.info("Initializing plugin");
-
+        logger.info("Initializing plugin facade layer.");
         NotificationHelper.registerAllChannels(getApplicationContext());
     }
 
-    private BroadcastReceiver locationModeChangeReceiver = new BroadcastReceiver() {
+    private final BroadcastReceiver locationModeChangeReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            logger.debug("Authorization has changed");
-            mDelegate.onAuthorizationChanged(getAuthorizationStatus());
+            logger.debug("System location authorization changed.");
+            if (mDelegate != null) {
+                mDelegate.onAuthorizationChanged(getAuthorizationStatus());
+            }
         }
     };
 
-    private BroadcastReceiver serviceBroadcastReceiver = new BroadcastReceiver() {
+    private final BroadcastReceiver serviceBroadcastReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             Bundle bundle = intent.getExtras();
+            if (bundle == null) return;
+            
             int action = bundle.getInt("action");
+            bundle.setClassLoader(LocationServiceImpl.class.getClassLoader());
 
             switch (action) {
                 case LocationServiceImpl.MSG_ON_LOCATION: {
-                    logger.debug("Received MSG_ON_LOCATION");
-                    bundle.setClassLoader(LocationServiceImpl.class.getClassLoader());
-                    BackgroundLocation location = (BackgroundLocation) bundle.getParcelable("payload");
-                    mDelegate.onLocationChanged(location);
-                    return;
+                    BackgroundLocation location = bundle.getParcelable("payload");
+                    if (mDelegate != null) mDelegate.onLocationChanged(location);
+                    break;
                 }
-
                 case LocationServiceImpl.MSG_ON_STATIONARY: {
-                    logger.debug("Received MSG_ON_STATIONARY");
-                    bundle.setClassLoader(LocationServiceImpl.class.getClassLoader());
-                    BackgroundLocation location = (BackgroundLocation) bundle.getParcelable("payload");
+                    BackgroundLocation location = bundle.getParcelable("payload");
                     mStationaryLocation = location;
-                    mDelegate.onStationaryChanged(location);
-                    return;
+                    if (mDelegate != null) mDelegate.onStationaryChanged(location);
+                    break;
                 }
-
                 case LocationServiceImpl.MSG_ON_ACTIVITY: {
-                    logger.debug("Received MSG_ON_ACTIVITY");
-                    bundle.setClassLoader(LocationServiceImpl.class.getClassLoader());
-                    BackgroundActivity activity = (BackgroundActivity) bundle.getParcelable("payload");
-                    mDelegate.onActivityChanged(activity);
-                    return;
+                    BackgroundActivity activity = bundle.getParcelable("payload");
+                    if (mDelegate != null) mDelegate.onActivityChanged(activity);
+                    break;
                 }
-
                 case LocationServiceImpl.MSG_ON_ERROR: {
-                    logger.debug("Received MSG_ON_ERROR");
                     Bundle errorBundle = bundle.getBundle("payload");
-                    Integer errorCode = errorBundle.getInt("code");
-                    String errorMessage = errorBundle.getString("message");
-                    mDelegate.onError(new PluginException(errorMessage, errorCode));
-                    return;
+                    if (errorBundle != null && mDelegate != null) {
+                        mDelegate.onError(new PluginException(errorBundle.getString("message"), errorBundle.getInt("code")));
+                    }
+                    break;
                 }
-
                 case LocationServiceImpl.MSG_ON_SERVICE_STARTED: {
-                    logger.debug("Received MSG_ON_SERVICE_STARTED");
-                    mDelegate.onServiceStatusChanged(SERVICE_STARTED);
-                    return;
+                    if (mDelegate != null) mDelegate.onServiceStatusChanged(SERVICE_STARTED);
+                    break;
                 }
-
                 case LocationServiceImpl.MSG_ON_SERVICE_STOPPED: {
-                    logger.debug("Received MSG_ON_SERVICE_STOPPED");
-                    mDelegate.onServiceStatusChanged(SERVICE_STOPPED);
-                    return;
+                    if (mDelegate != null) mDelegate.onServiceStatusChanged(SERVICE_STOPPED);
+                    break;
                 }
-
                 case LocationServiceImpl.MSG_ON_ABORT_REQUESTED: {
-                    logger.debug("Received MSG_ON_ABORT_REQUESTED");
-
                     if (mDelegate != null) {
-                        // We have a delegate, tell it that there's a request.
-                        // It will decide whether to stop or not.
                         mDelegate.onAbortRequested();
                     } else {
-                        // No delegate, we may be running in the background.
-                        // Let's just stop.
                         stop();
                     }
-
-                    return;
+                    break;
                 }
-
                 case LocationServiceImpl.MSG_ON_HTTP_AUTHORIZATION: {
-                    logger.debug("Received MSG_ON_HTTP_AUTHORIZATION");
-
-                    if (mDelegate != null) {
-                        mDelegate.onHttpAuthorization();
-                    }
-
-                    return;
+                    if (mDelegate != null) mDelegate.onHttpAuthorization();
+                    break;
                 }
             }
         }
     };
 
-    @TargetApi(Build.VERSION_CODES.KITKAT)
     private synchronized void registerLocationModeChangeReceiver() {
         if (mLocationModeChangeReceiverRegistered) return;
 
-        getContext().registerReceiver(locationModeChangeReceiver, new IntentFilter(android.location.LocationManager.MODE_CHANGED_ACTION));
+        IntentFilter filter = new IntentFilter(android.location.LocationManager.MODE_CHANGED_ACTION);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getApplicationContext().registerReceiver(locationModeChangeReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            getApplicationContext().registerReceiver(locationModeChangeReceiver, filter);
+        }
         mLocationModeChangeReceiverRegistered = true;
     }
 
     private synchronized void unregisterLocationModeChangeReceiver() {
         if (!mLocationModeChangeReceiverRegistered) return;
-
-        Context context = getContext();
-        if (context != null) {
-            context.unregisterReceiver(locationModeChangeReceiver);
-        }
+        getApplicationContext().unregisterReceiver(locationModeChangeReceiver);
         mLocationModeChangeReceiverRegistered = false;
     }
 
     private synchronized void registerServiceBroadcast() {
         if (mServiceBroadcastReceiverRegistered) return;
-
-        LocalBroadcastManager.getInstance(getContext()).registerReceiver(serviceBroadcastReceiver, new IntentFilter(LocationServiceImpl.ACTION_BROADCAST));
+        LocalBroadcastManager.getInstance(getApplicationContext()).registerReceiver(serviceBroadcastReceiver, new IntentFilter(LocationServiceImpl.ACTION_BROADCAST));
         mServiceBroadcastReceiverRegistered = true;
     }
 
     private synchronized void unregisterServiceBroadcast() {
         if (!mServiceBroadcastReceiverRegistered) return;
-
-        Context context = getContext();
-        if (context != null) {
-            LocalBroadcastManager.getInstance(context).unregisterReceiver(serviceBroadcastReceiver);
-        }
-
+        LocalBroadcastManager.getInstance(getApplicationContext()).unregisterReceiver(serviceBroadcastReceiver);
         mServiceBroadcastReceiverRegistered = false;
     }
 
     public void start() {
-        logger.debug("Starting service");
+        logger.debug("Requesting engine initialization sequence.");
+        final PermissionManager permissionManager = PermissionManager.getInstance(getContext());
 
-        PermissionManager permissionManager = PermissionManager.getInstance(getContext());
         permissionManager.checkPermissions(Arrays.asList(INITIALPERMISSIONS), new PermissionManager.PermissionRequestListener() {
             @Override
             public void onPermissionGranted() {
-                logger.info("User granted initial requested permissions");
+                logger.info("Foreground tracking assets authorized.");
 
-                if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q){
-                    permissionManager.checkPermissions(Arrays.asList(BACKGROUNDLOCATIONPERMISSION), new PermissionManager.PermissionRequestListener() {
-                        @Override
-                        public void onPermissionGranted() {
-                            logger.info("User granted background location permissions");
-                            // watch location mode changes
-                            registerLocationModeChangeReceiver();
-                            registerServiceBroadcast();
-                            startBackgroundService();
-                        }
-
-                        @Override
-                        public void onPermissionDenied() {
-                            logger.info("User denied background location permissions");
-                            if (mDelegate != null) {
-                                mDelegate.onAuthorizationChanged(BackgroundGeolocationFacade.AUTHORIZATION_DENIED);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    if (hasPermissions(getApplicationContext(), BACKGROUNDLOCATIONPERMISSION)) {
+                        executeTrackingServiceStart();
+                    } else {
+                        logger.info("Forwarding split-permission validation sequence for background location.");
+                        permissionManager.checkPermissions(Arrays.asList(BACKGROUNDLOCATIONPERMISSION), new PermissionManager.PermissionRequestListener() {
+                            @Override
+                            public void onPermissionGranted() {
+                                executeTrackingServiceStart();
                             }
-                        }
-                    });
-                }
-                else {
-                    // watch location mode changes
-                    registerLocationModeChangeReceiver();
-                    registerServiceBroadcast();
-                    startBackgroundService();
-                }
 
+                            @Override
+                            public void onPermissionDenied() {
+                                logger.warn("User explicitly declined 'Allow all the time' background tracking permission.");
+                                if (mDelegate != null) mDelegate.onAuthorizationChanged(AUTHORIZATION_DENIED);
+                            }
+                        });
+                    }
+                } else {
+                    executeTrackingServiceStart();
+                }
             }
 
             @Override
             public void onPermissionDenied() {
-                logger.info("User denied requested permissions");
-                if (mDelegate != null) {
-                    mDelegate.onAuthorizationChanged(BackgroundGeolocationFacade.AUTHORIZATION_DENIED);
-                }
+                logger.warn("Core application location privileges denied.");
+                if (mDelegate != null) mDelegate.onAuthorizationChanged(AUTHORIZATION_DENIED);
             }
         });
     }
 
-    public void stop() {
-        logger.debug("Stopping service");
-        unregisterLocationModeChangeReceiver();
-        // Note: we cannot unregistered service broadcast here
-        // because no stop notification from service will arrive
-        // unregisterServiceBroadcast();
+    private void executeTrackingServiceStart() {
+        registerLocationModeChangeReceiver();
+        registerServiceBroadcast();
+        startBackgroundService();
+    }
 
+    public void stop() {
+        logger.debug("Halting tracking pipeline.");
+        unregisterLocationModeChangeReceiver();
         stopBackgroundService();
     }
 
@@ -314,8 +268,7 @@ public class BackgroundGeolocationFacade {
     }
 
     public void destroy() {
-        logger.info("Destroying plugin");
-
+        logger.info("Tearing down Facade interface lifecycle.");
         unregisterLocationModeChangeReceiver();
         unregisterServiceBroadcast();
 
@@ -327,13 +280,11 @@ public class BackgroundGeolocationFacade {
     }
 
     public Collection<BackgroundLocation> getLocations() {
-        LocationDAO dao = DAOFactory.createLocationDAO(getContext());
-        return dao.getAllLocations();
+        return DAOFactory.createLocationDAO(getApplicationContext()).getAllLocations();
     }
 
     public Collection<BackgroundLocation> getValidLocations() {
-        LocationDAO dao = DAOFactory.createLocationDAO(getContext());
-        return dao.getValidLocations();
+        return DAOFactory.createLocationDAO(getApplicationContext()).getValidLocations();
     }
 
     public BackgroundLocation getStationaryLocation() {
@@ -341,22 +292,16 @@ public class BackgroundGeolocationFacade {
     }
 
     public void deleteLocation(Long locationId) {
-        logger.info("Deleting location locationId={}", locationId);
-        LocationDAO dao = DAOFactory.createLocationDAO(getContext());
-        dao.deleteLocationById(locationId.longValue());
+        DAOFactory.createLocationDAO(getApplicationContext()).deleteLocationById(locationId);
     }
 
     public void deleteAllLocations() {
-        logger.info("Deleting all locations");
-        LocationDAO dao = DAOFactory.createLocationDAO(getContext());
-        dao.deleteAllLocations();
+        DAOFactory.createLocationDAO(getApplicationContext()).deleteAllLocations();
     }
 
     public void deleteAllLocationsPermanent(long millisBeforeTimeStamp) {
-        LocationDAO dao = DAOFactory.createLocationDAO(getContext());
-        dao.deleteAllLocationsPermanent(millisBeforeTimeStamp);
+        DAOFactory.createLocationDAO(getApplicationContext()).deleteAllLocationsPermanent(millisBeforeTimeStamp);
     }
-
 
     public BackgroundLocation getCurrentLocation(int timeout, long maximumAge, boolean enableHighAccuracy) throws PluginException {
         logger.info("Getting current location with timeout:{} maximumAge:{} enableHighAccuracy:{}", timeout, maximumAge, enableHighAccuracy);
@@ -399,125 +344,84 @@ public class BackgroundGeolocationFacade {
     }
 
     public synchronized void configure(Config config) throws PluginException {
-        try
-        {
+        try {
             Config newConfig = Config.merge(getStoredConfig(), config);
             persistConfiguration(newConfig);
             mConfig = newConfig;
             mService.configure(newConfig);
         } catch (Exception e) {
-            logger.error("Configuration error: {}", e.getMessage());
-            throw new PluginException("Configuration error", e, PluginException.CONFIGURE_ERROR);
+            throw new PluginException("Configuration synchronization failure", e, PluginException.CONFIGURE_ERROR);
         }
     }
 
     public synchronized void setting(Setting setting) throws PluginException {
-        try
-        {
+        try {
             Setting newSetting = Setting.merge(getStoredSetting(), setting);
             persistSetting(newSetting);
             mSetting = newSetting;
             mService.setting(newSetting);
         } catch (Exception e) {
-            logger.error("Setting error: {}", e.getMessage());
-            throw new PluginException("Setting error", e, PluginException.CONFIGURE_ERROR);
+            throw new PluginException("Setting persistence failure", e, PluginException.CONFIGURE_ERROR);
         }
     }
 
     public synchronized Config getConfig() {
-        if (mConfig != null) {
-            return mConfig;
-        }
-
+        if (mConfig != null) return mConfig;
         try {
             mConfig = getStoredConfig();
         } catch (PluginException e) {
-            logger.error("Error getting stored config will use default", e.getMessage());
             mConfig = Config.getDefault();
         }
-
         return mConfig;
     }
 
     public synchronized Setting getSetting() {
-        if (mSetting != null) {
-            return mSetting;
-        }
-
+        if (mSetting != null) return mSetting;
         try {
             mSetting = getStoredSetting();
         } catch (PluginException e) {
-            logger.error("Error getting stored setting will use default", e.getMessage());
             mSetting = Setting.getDefault();
         }
-
         return mSetting;
     }
 
     public synchronized Config getStoredConfig() throws PluginException {
         try {
-            ConfigurationDAO dao = DAOFactory.createConfigurationDAO(getContext());
-            Config config = dao.retrieveConfiguration();
-            if (config == null) {
-                config = Config.getDefault();
-            }
-            return config;
+            Config config = DAOFactory.createConfigurationDAO(getApplicationContext()).retrieveConfiguration();
+            return (config != null) ? config : Config.getDefault();
         } catch (JSONException e) {
-            logger.error("Error getting stored config: {}", e.getMessage());
-            throw new PluginException("Error getting stored config", e, PluginException.JSON_ERROR);
+            throw new PluginException("Config payload extraction error", e, PluginException.JSON_ERROR);
         }
     }
 
     public synchronized Setting getStoredSetting() throws PluginException {
         try {
-            SettingDAO dao = DAOFactory.createSettingDAO(getContext());
-            Setting setting = dao.retrieveSetting();
-            if (setting == null) {
-                setting = Setting.getDefault();
-            }
-            return setting;
+            Setting setting = DAOFactory.createSettingDAO(getApplicationContext()).retrieveSetting();
+            return (setting != null) ? setting : Setting.getDefault();
         } catch (JSONException e) {
-            logger.error("Error getting stored Setting: {}", e.getMessage());
-            throw new PluginException("Error getting stored Setting", e, PluginException.JSON_ERROR);
+            throw new PluginException("Setting payload extraction error", e, PluginException.JSON_ERROR);
         }
     }
 
     public Collection<LogEntry> getLogEntries(int limit) {
-        DBLogReader logReader = new DBLogReader(mContext);
-        return logReader.getEntries(limit, 0, Level.DEBUG);
+        return new DBLogReader(getApplicationContext()).getEntries(limit, 0, Level.DEBUG);
     }
 
     public Collection<LogEntry> getLogEntries(int limit, int offset, String minLevel) {
-        DBLogReader logReader = new DBLogReader(mContext);
-        return logReader.getEntries(limit, offset, Level.valueOf(minLevel));
+        return new DBLogReader(getApplicationContext()).getEntries(limit, offset, Level.valueOf(minLevel));
     }
 
-    /**
-     * Force location sync
-     *
-     * Method is ignoring syncThreshold and also user sync settings preference
-     * and sync locations to defined syncUrl
-     */
     public void forceSync() {
-        logger.debug("Sync locations forced via WorkManager");
+        logger.debug("Sync locations forced via WorkManager configuration parameters.");
+        Constraints constraints = new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
+        Data inputData = new Data.Builder().putBoolean("force_sync", true).build();
 
-        Constraints constraints = new Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build();
-
-        // 1. Tell the worker to bypass the database threshold
-        Data inputData = new Data.Builder()
-                .putBoolean("force_sync", true)
-                .build();
-
-        // 2. Build the Expedited Request
         OneTimeWorkRequest syncRequest = new OneTimeWorkRequest.Builder(LocationSyncWorker.class)
                 .setConstraints(constraints)
                 .setInputData(inputData)
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .build();
 
-        // 3. Shove it to the front of the queue
         WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
                 "LocationSyncJob",
                 ExistingWorkPolicy.APPEND_OR_REPLACE,
@@ -530,19 +434,17 @@ public class BackgroundGeolocationFacade {
     }
 
     public boolean hasPermissions() {
-        return hasPermissions(getContext(), PERMISSIONS);
+        return hasPermissions(getApplicationContext(), PERMISSIONS);
     }
 
     public boolean locationServicesEnabled() throws PluginException {
-        Context context = getContext();
+        Context context = getApplicationContext();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            int locationMode = 0;
             try {
-                locationMode = Settings.Secure.getInt(context.getContentResolver(), Settings.Secure.LOCATION_MODE);
+                int locationMode = Settings.Secure.getInt(context.getContentResolver(), Settings.Secure.LOCATION_MODE);
                 return locationMode != Settings.Secure.LOCATION_MODE_OFF;
             } catch (SettingNotFoundException e) {
-                logger.error("Location services check failed", e);
-                throw new PluginException("Location services check failed", e, PluginException.SETTINGS_ERROR);
+                throw new PluginException("Location hardware provider verification failed.", e, PluginException.SETTINGS_ERROR);
             }
         } else {
             String locationProviders = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.LOCATION_PROVIDERS_ALLOWED);
@@ -551,12 +453,10 @@ public class BackgroundGeolocationFacade {
     }
 
     public void registerHeadlessTask(final String taskRunnerClass) {
-        logger.info("Registering headless task: {}", taskRunnerClass);
         mService.registerHeadlessTask(taskRunnerClass);
     }
 
     private void startBackgroundService() {
-        logger.info("Attempt to start bg service");
         if (mIsPaused) {
             mService.startForegroundService();
         } else {
@@ -565,7 +465,6 @@ public class BackgroundGeolocationFacade {
     }
 
     private void stopBackgroundService() {
-        logger.info("Attempt to stop bg service");
         mService.stop();
     }
 
@@ -573,13 +472,12 @@ public class BackgroundGeolocationFacade {
         return ((LocationServiceProxy) mService).isRunning();
     }
 
-    private void persistConfiguration(Config config) throws NullPointerException {
-        ConfigurationDAO dao = DAOFactory.createConfigurationDAO(getContext());
-        dao.persistConfiguration(config);
+    private void persistConfiguration(Config config) {
+        DAOFactory.createConfigurationDAO(getApplicationContext()).persistConfiguration(config);
     }
-    private void persistSetting(Setting setting) throws NullPointerException {
-        SettingDAO dao = DAOFactory.createSettingDAO(getContext());
-        dao.persistSetting(setting);
+
+    private void persistSetting(Setting setting) {
+        DAOFactory.createSettingDAO(getApplicationContext()).persistSetting(setting);
     }
 
     private Context getContext() {
@@ -594,23 +492,19 @@ public class BackgroundGeolocationFacade {
         Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
         intent.addCategory(Intent.CATEGORY_DEFAULT);
         intent.setData(Uri.parse("package:" + context.getPackageName()));
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY);
-        intent.addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_HISTORY | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
         context.startActivity(intent);
     }
 
     public static void showLocationSettings(Context context) {
         Intent intent = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
         intent.addCategory(Intent.CATEGORY_DEFAULT);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY);
-        intent.addFlags(Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_HISTORY | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
         context.startActivity(intent);
     }
 
     public static boolean hasPermissions(Context context, String[] permissions) {
-        for (String perm: permissions) {
+        for (String perm : permissions) {
             if (ContextCompat.checkSelfPermission(context, perm) != PackageManager.PERMISSION_GRANTED) {
                 return false;
             }
@@ -618,13 +512,6 @@ public class BackgroundGeolocationFacade {
         return true;
     }
 
-    /**
-     * Sets a transform for each coordinate about to be committed (sent or saved for later sync).
-     * You can use this for modifying the coordinates in any way.
-     *
-     * If the transform returns <code>null</code>, it will prevent the location from being committed.
-     * @param transform - the transform listener
-     */
     public static void setLocationTransform(LocationTransform transform) {
         LocationServiceImpl.setLocationTransform(transform);
     }
@@ -632,6 +519,4 @@ public class BackgroundGeolocationFacade {
     public static LocationTransform getLocationTransform() {
         return LocationServiceImpl.getLocationTransform();
     }
-
-
 }

@@ -1,44 +1,53 @@
+
 package com.marianhello.bgloc.data;
 
 import android.os.Parcel;
 import android.os.Parcelable;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.google.android.gms.location.DetectedActivity;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
-/**
- * Created by finch on 5.12.2017.
- */
-
 public class BackgroundActivity implements Parcelable {
     private int confidence;
     private int type;
+    private int locationProvider; 
 
-    public BackgroundActivity(Integer locationProvider, DetectedActivity activity) {
-        confidence = activity.getConfidence();
-        type = activity.getType();
+    public BackgroundActivity(@Nullable Integer locationProvider, @NonNull DetectedActivity activity) {
+        this.confidence = activity.getConfidence();
+        this.type = activity.getType();
+        this.locationProvider = locationProvider != null ? locationProvider : -1;
+    }
+
+
+    public BackgroundActivity(int confidence, int type, int locationProvider) {
+        this.confidence = confidence;
+        this.type = type;
+        this.locationProvider = locationProvider;
     }
 
     private BackgroundActivity(Parcel in) {
         confidence = in.readInt();
         type = in.readInt();
+        locationProvider = in.readInt();
     }
 
-    /**
-     * Returns location as JSON object.
-     * @throws JSONException
-     */
+
     public JSONObject toJSONObject() throws JSONException {
         JSONObject json = new JSONObject();
         json.put("confidence", confidence);
         json.put("type", getActivityString(type));
+        json.put("locationProvider", locationProvider);
         return json;
     }
 
+    @NonNull
     public static String getActivityString(int detectedActivityType) {
-        switch(detectedActivityType) {
+        switch (detectedActivityType) {
             case DetectedActivity.IN_VEHICLE:
                 return "IN_VEHICLE";
             case DetectedActivity.ON_BICYCLE:
@@ -76,11 +85,21 @@ public class BackgroundActivity implements Parcelable {
         this.type = type;
     }
 
+    public int getLocationProvider() {
+        return locationProvider;
+    }
+
+    public void setLocationProvider(int locationProvider) {
+        this.locationProvider = locationProvider;
+    }
+
     public static final Parcelable.Creator<BackgroundActivity> CREATOR
             = new Parcelable.Creator<BackgroundActivity>() {
+        @Override
         public BackgroundActivity createFromParcel(Parcel in) {
             return new BackgroundActivity(in);
         }
+        @Override
         public BackgroundActivity[] newArray(int size) {
             return new BackgroundActivity[size];
         }
@@ -92,17 +111,18 @@ public class BackgroundActivity implements Parcelable {
     }
 
     @Override
-    public void writeToParcel(Parcel dest, int i) {
+    public void writeToParcel(@NonNull Parcel dest, int flags) {
         dest.writeInt(confidence);
         dest.writeInt(type);
+        dest.writeInt(locationProvider); 
     }
 
+    @NonNull
     @Override
-    public String toString () {
-        return new StringBuffer()
-                .append("BackgroundActivity[confidence=").append(confidence)
-                .append(" type=").append(getActivityString(type))
-                .append("]")
-                .toString();
+    public String toString() {
+        return "BackgroundActivity[confidence=" + confidence +
+                " type=" + getActivityString(type) +
+                " locationProvider=" + locationProvider +
+                "]";
     }
 }
