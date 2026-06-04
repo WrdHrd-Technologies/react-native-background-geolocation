@@ -3,19 +3,19 @@ package com.marianhello.bgloc;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Build;
 import android.util.Log;
-import com.marianhello.bgloc.data.ConfigurationDAO;
-import com.marianhello.bgloc.data.DAOFactory;
-import com.marianhello.bgloc.data.SettingDAO;
-import com.marianhello.bgloc.service.LocationServiceImpl;
-import com.marianhello.bgloc.service.LocationServiceIntentBuilder;
+
+import androidx.work.Data;
+import androidx.work.ExistingWorkPolicy;
+import androidx.work.OneTimeWorkRequest;
+import androidx.work.OutOfQuotaPolicy;
+import androidx.work.WorkManager;
+
+import com.marianhello.bgloc.sync.LocationSyncWorker;
 import com.marianhello.utils.RealTimeHelper;
-import org.json.JSONException;
 
 public class BootCompletedReceiver extends BroadcastReceiver {
     private static final String TAG = BootCompletedReceiver.class.getName();
-    private static final String KEY_COMMAND = "cmd";
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -23,54 +23,28 @@ public class BootCompletedReceiver extends BroadcastReceiver {
             return;
         }
 
-        Log.d(TAG, "Received boot completed broadcast event.");
+        Log.i(TAG, "Device boot completed. Offloading verification and tracking recovery to WorkManager.");
 
         RealTimeHelper.initialize(context);
 
-        ConfigurationDAO dao = DAOFactory.createConfigurationDAO(context);
-        SettingDAO settingDao = DAOFactory.createSettingDAO(context);
-        Config config = null;
-        Setting setting = null;
+        Data inputData = new Data.Builder()
+                .putBoolean("resurrect_on_boot", true)
+                .build();
+
+        OneTimeWorkRequest bootRequest = new OneTimeWorkRequest.Builder(LocationSyncWorker.class)
+                .setInputData(inputData)
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .build();
 
         try {
-            config = dao.retrieveConfiguration();
-        } catch (JSONException e) {
-            Log.e(TAG, "Configuration parsing failed during boot execution.", e);
-        }
-
-        try {
-            setting = settingDao.retrieveSetting();
-        } catch (JSONException e) {
-            Log.w(TAG, "Setting retrieval failed during boot execution, using defaults.", e);
-            setting = Setting.getDefault();
-        }
-
-        if (config == null || setting == null) {
-            Log.w(TAG, "Abort boot wake: Config or Setting reference missing.");
-            return;
-        }
-
-        if (config.getStartOnBoot() && setting.isStarted()) {
-            Log.i(TAG, "Conditions met. Spawning LocationServiceImpl via boot receiver pipeline path.");
-            
-            Intent locationServiceIntent = new Intent(context, LocationServiceImpl.class);
-            LocationServiceIntentBuilder.Command cmd = new LocationServiceIntentBuilder.Command(0); 
-            
-            locationServiceIntent.putExtra(KEY_COMMAND, cmd.toBundle());
-            locationServiceIntent.addFlags(Intent.FLAG_FROM_BACKGROUND);
-            locationServiceIntent.putExtra("config", config);
-
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(locationServiceIntent);
-                } else {
-                    context.startService(locationServiceIntent);
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Operating System actively blocked background service initialization sequence.", e);
-            }
-        } else {
-            Log.d(TAG, "Ignored boot broadcast: startOnBoot or tracking status is disabled.");
+            WorkManager.getInstance(context.getApplicationContext()).enqueueUniqueWork(
+                    "LocationSyncJob",
+                    ExistingWorkPolicy.REPLACE, 
+                    bootRequest
+            );
+            Log.info(TAG, "Boot resurrection task successfully offloaded to background worker channels.");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to schedule tracking boot restoration pipeline with WorkManager.", e);
         }
     }
 }

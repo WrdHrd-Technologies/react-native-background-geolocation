@@ -21,9 +21,12 @@ import androidx.work.WorkerParameters;
 
 import com.marianhello.bgloc.Config;
 import com.marianhello.bgloc.HttpPostService;
+import com.marianhello.bgloc.Setting;
 import com.marianhello.bgloc.data.ConfigurationDAO;
 import com.marianhello.bgloc.data.DAOFactory;
+import com.marianhello.bgloc.data.SettingDAO;
 import com.marianhello.bgloc.service.LocationServiceImpl;
+import com.marianhello.bgloc.service.LocationServiceIntentBuilder;
 import com.marianhello.logging.LoggerManager;
 
 import java.io.File;
@@ -57,6 +60,53 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
     @Override
     public Result doWork() {
         logger.warn("LocationSyncWorker START");
+        
+        if (isStopped()) {
+            logger.warn("WorkManager canceled execution context before thread initialization.");
+            return Result.failure();
+        }
+
+        final Context context = getApplicationContext();
+
+        boolean shouldResurrectOnUpgrade = getInputData().getBoolean("resurrect_service", false);
+        boolean shouldResurrectOnBoot = getInputData().getBoolean("resurrect_on_boot", false);
+
+        if (shouldResurrectOnUpgrade || shouldResurrectOnBoot) {
+            logger.info("Worker background thread: Boot/Upgrade event captured. Validating tracking configuration parameters in SQLite.");
+            try {
+                SettingDAO workerSettingDao = DAOFactory.createSettingDAO(context);
+                Setting trackingSetting = workerSettingDao.retrieveSetting();
+
+                boolean isTrackingActive = trackingSetting != null && trackingSetting.isStarted();
+                boolean isBootAllowed = true;
+
+                if (shouldResurrectOnBoot) {
+                    ConfigurationDAO workerConfigDao = DAOFactory.createConfigurationDAO(context);
+                    Config trackingConfig = workerConfigDao.retrieveConfiguration();
+                    isBootAllowed = (trackingConfig != null && trackingConfig.getStartOnBoot());
+                }
+
+                if (isTrackingActive && isBootAllowed) {
+                    logger.info("Worker: Conditions verified. Reviving core tracking service context safely.");
+                    
+                    Intent serviceIntent = new Intent(context, LocationServiceImpl.class);
+                    serviceIntent.putExtra("cmd", new LocationServiceIntentBuilder.Command(0).toBundle());
+                    serviceIntent.addFlags(Intent.FLAG_FROM_BACKGROUND);
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(serviceIntent);
+                    } else {
+                        context.startService(serviceIntent);
+                    }
+                    logger.info("Worker: Foreground resurrection intent dispatched successfully.");
+                } else {
+                    logger.info("Worker: Tracking status or startOnBoot preference is disabled. Skipping service startup.");
+                }
+            } catch (Exception e) {
+                logger.error("Worker background thread failed processing system restoration gate logic.", e);
+            }
+        }
+
         Config config;
         try {
             config = configDAO.retrieveConfiguration();
@@ -80,6 +130,8 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
 
         File file = null;
         try {
+            if (isStopped()) return Result.retry();
+
             file = batchManager.createBatch(batchStartMillis, syncThreshold, config.getTemplate());
             
             if (file == null) {
@@ -87,10 +139,14 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
                 return Result.success();
             }
 
+            if (isStopped()) {
+                cleanUpBatchFile(file);
+                return Result.retry();
+            }
+
             logger.info("Streaming tracking data packet payload outbound targeting timestamp: {}", batchStartMillis);
 
             Map<String, String> headers = new HashMap<>();
-
             if (config.getHttpHeaders() != null) {
                 for (Map.Entry<?, ?> entry : config.getHttpHeaders().entrySet()) {
                     if (entry.getKey() != null) {
@@ -103,6 +159,12 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
             headers.put("x-batch-id", String.valueOf(batchStartMillis));
 
             boolean success = uploadLocations(file, config.getSyncUrl(), headers);
+
+            if (isStopped()) {
+                logger.warn("Worker intercepted a system stop request post-upload transaction. Relinquishing batch changes.");
+                cleanUpBatchFile(file);
+                return Result.retry();
+            }
 
             if (success) {
                 logger.info("Location synchronizer batch transaction finalized cleanly.");
@@ -117,19 +179,14 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
             logger.error("IO barrier breakdown encountered while preparing offline caching configurations.", e);
             return Result.retry();
         } finally {
-            if (file != null && file.exists()) {
-                if (file.delete()) {
-                    logger.info("Transient batch cache workspace file purged cleanly from persistent storage.");
-                } else {
-                    Log.w(TAG, "File engine failed reclaiming internal workspace resources: " + file.getAbsolutePath());
-                }
-            }
+            cleanUpBatchFile(file);
         }
     }
 
     private boolean uploadLocations(@NonNull File file, @NonNull String url, @NonNull Map<String, String> httpHeaders) {
-        final NotificationCompat.Builder builder = createBaseNotificationBuilder();
+        if (isStopped()) return false;
 
+        final NotificationCompat.Builder builder = createBaseNotificationBuilder();
         if (builder != null && hasNotificationPermission()) {
             notificationManager.notify(NOTIFICATION_ID, builder.build());
         }
@@ -139,6 +196,9 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
         try {
             HashMap<String, String> legacyMapWrapper = new HashMap<>(httpHeaders);
             int responseCode = HttpPostService.postJSONFile(url, file, legacyMapWrapper, this);
+            
+            if (isStopped()) return false;
+
             boolean isStatusOkay = responseCode >= 200 && responseCode < 300;
 
             if (responseCode == 285) {
@@ -190,13 +250,14 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
 
     @Override
     public void onProgress(final int progress) {
-        if (!notificationsEnabled || !hasNotificationPermission()) return;
+        if (isStopped() || !notificationsEnabled || !hasNotificationPermission()) return;
 
         if (progress == 100 || progress >= lastReportedProgress + 10) {
             this.lastReportedProgress = progress;
             
             mainThreadHandler.post(() -> {
                 try {
+                    if (isStopped()) return; 
                     NotificationCompat.Builder updateBuilder = createBaseNotificationBuilder();
                     if (updateBuilder != null) {
                         updateBuilder.setOngoing(true)
@@ -210,6 +271,29 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
                 }
             });
         }
+    }
+
+    private void cleanUpBatchFile(@Nullable File file) {
+        if (file != null && file.exists()) {
+            try {
+                if (file.delete()) {
+                    logger.info("Transient batch cache workspace file purged cleanly from persistent storage.");
+                } else {
+                    Log.w(TAG, "File engine failed reclaiming internal workspace resources: " + file.getAbsolutePath());
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error executing file cleanup operations inside isolation wrapper.", e);
+            }
+        }
+    }
+
+    @Override
+    public void onStopped() {
+        super.onStopped();
+        logger.warn("⚠️ WorkManager forcefully triggered native onStopped() callback sequence. Shutting down worker handles.");
+        try {
+            notificationManager.cancel(NOTIFICATION_ID);
+        } catch (Exception ignored) {}
     }
 
     @Nullable

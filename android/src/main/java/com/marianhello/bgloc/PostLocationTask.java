@@ -111,23 +111,27 @@ public class PostLocationTask {
 
     private void post(final BackgroundLocation location) {
         long locationId = location.getLocationId();
+        boolean hasImmediateUrl = mConfig.getUrl() != null && !mConfig.getUrl().isEmpty();
 
-        if (mHasConnectivity && mConfig.hasValidUrl()) {
-            if (postLocation(location)) {
-                mLocationDAO.deleteLocationById(locationId);
-
-                return;
-            } else {
-                mLocationDAO.updateLocationForSync(locationId);
+        if (hasImmediateUrl) {
+            if (mHasConnectivity && mConfig.hasValidUrl()) {
+                if (postLocation(location)) {
+                    mLocationDAO.deleteLocationById(locationId);
+                    return; 
+                }
             }
-        } else {
+            
             mLocationDAO.updateLocationForSync(locationId);
+            return; 
         }
+
+        mLocationDAO.updateLocationForSync(locationId);
 
         if (mConfig.hasValidSyncUrl()) {
             long syncLocationsCount = mLocationDAO.getLocationsForSyncCount(System.currentTimeMillis());
             if (syncLocationsCount >= mConfig.getSyncThreshold()) {
-                logger.debug("Attempt to sync locations: {} threshold: {}", syncLocationsCount, mConfig.getSyncThreshold());
+                logger.debug("Threshold reached for batch tracking config (%d/%d). Invoking WorkManager syncer.", 
+                        syncLocationsCount, mConfig.getSyncThreshold());
                 mTaskListener.onSyncRequested();
             }
         }
@@ -145,7 +149,6 @@ public class PostLocationTask {
         }
 
         String url = mConfig.getUrl();
-
         Map<String, String> safeHeaders = mConfig.getHttpHeaders();
         logger.debug("Posting json to url: {} headers: {}", url, mConfig.getHttpHeaders());
         int responseCode;
@@ -160,7 +163,6 @@ public class PostLocationTask {
 
         if (responseCode == 285) {
             logger.debug("Location was sent to the server, and received an \"HTTP 285 Updates Not Required\"");
-
             if (mTaskListener != null)
                 mTaskListener.onRequestedAbortUpdates();
         }
@@ -170,9 +172,7 @@ public class PostLocationTask {
                 mTaskListener.onHttpAuthorizationUpdates();
         }
 
-        // All 2xx statuses are okay
         boolean isStatusOkay = responseCode >= 200 && responseCode < 300;
-
         if (!isStatusOkay) {
             logger.warn("Server error while posting locations responseCode: {}", responseCode);
             return false;
@@ -181,7 +181,7 @@ public class PostLocationTask {
         return true;
     }
 
-    private void postError(PluginException error,String targetUrl) {
+    private void postError(PluginException error, String targetUrl) {
         try {
             JSONObject jsonError = new JSONObject(error.toJsonString());
             String finalUrl = targetUrl.endsWith("/error") ? targetUrl : targetUrl + "/error";
@@ -209,7 +209,7 @@ public class PostLocationTask {
                 mExecutor.execute(new Runnable() {
                     @Override
                     public void run() {
-                        postError(error,errorUrl);
+                        postError(error, errorUrl);
                     }
                 });
             } catch (RejectedExecutionException ex) {

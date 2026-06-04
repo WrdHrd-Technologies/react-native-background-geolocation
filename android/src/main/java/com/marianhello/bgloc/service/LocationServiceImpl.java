@@ -68,7 +68,6 @@ import static com.marianhello.bgloc.service.LocationServiceIntentBuilder.contain
 import static com.marianhello.bgloc.service.LocationServiceIntentBuilder.getCommand;
 import static com.marianhello.bgloc.service.LocationServiceIntentBuilder.getMessage;
 
-
 public class LocationServiceImpl extends Service implements ProviderDelegate, LocationService {
 
     public static final String ACTION_BROADCAST = ".broadcast";
@@ -105,7 +104,11 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
 
     private static LocationTransform sLocationTransform;
     private static LocationProviderFactory sLocationProviderFactory;
-    //private PowerManager.WakeLock wakeLock;
+    
+    private PowerManager.WakeLock wakeLock;
+    private final Handler mWatchdogHandler = new Handler(Looper.getMainLooper());
+    private Runnable mWatchdogRunnable;
+    private static final long WATCHDOG_TIMEOUT = 5 * 60 * 1000; 
 
     private ConnectivityManager connectivityManager;
     private ConnectivityManager.NetworkCallback networkCallback;
@@ -160,7 +163,9 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         mLocationDAO = DAOFactory.createLocationDAO(this);
 
         PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
-       // wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "com.marianhello.backgroundgeolocation:wakelock");
+        if (powerManager != null) {
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "com.marianhello.backgroundgeolocation:wakelock");
+        }
 
         mPostLocationTask = new PostLocationTask(mLocationDAO,
                 new PostLocationTask.PostLocationTaskListener() {
@@ -171,56 +176,35 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             @Override public boolean hasConnectivity() { return isNetworkAvailable(); }
         });
 
-//        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-//            registerReceiver(connectivityChangeReceiver, new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION), Context.RECEIVER_NOT_EXPORTED);
-//        } else {
-//            registerReceiver(connectivityChangeReceiver, new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
-//        }
-
-        connectivityManager =
-                (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
 
         if (connectivityManager != null) {
-
             networkCallback = new ConnectivityManager.NetworkCallback() {
-
                 @Override
                 public void onAvailable(@NonNull Network network) {
                     logger.info("Network became available");
-
                     if (mPostLocationTask != null) {
                         mPostLocationTask.setHasConnectivity(true);
                     }
-
                     scheduleNetworkSync(true);
                 }
 
                 @Override
                 public void onLost(@NonNull Network network) {
                     logger.info("Network lost");
-
                     if (mPostLocationTask != null) {
                         mPostLocationTask.setHasConnectivity(false);
                     }
                 }
 
                 @Override
-                public void onCapabilitiesChanged(
-                        @NonNull Network network,
-                        @NonNull android.net.NetworkCapabilities capabilities
-                ) {
-
-                    boolean hasInternet =
-                            capabilities.hasCapability(
-                                    android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET
-                            );
-
+                public void onCapabilitiesChanged(@NonNull Network network, @NonNull NetworkCapabilities capabilities) {
+                    boolean hasInternet = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
                     if (mPostLocationTask != null) {
                         mPostLocationTask.setHasConnectivity(hasInternet);
                     }
                 }
             };
-
             connectivityManager.registerDefaultNetworkCallback(networkCallback);
         }
         
@@ -229,8 +213,15 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
 
     private void promoteToForegroundSynchronously() {
         if (mIsInForeground) return;
+       
+        Setting setting = getSetting(); 
+        if (setting != null && !setting.isStarted()) {
+            logger.info("Synchronous promotion bypassed: System settings indicate tracking is toggled OFF.");
+            return; 
+        }
+
         try {
-            Config fastConfig = (mConfig != null) ? mConfig : getConfig();
+            Config fastConfig = getConfig();
             Notification notification = new NotificationHelper.NotificationFactory(this).getNotification(
                     fastConfig.getNotificationTitle(),
                     fastConfig.getNotificationText(),
@@ -239,17 +230,9 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
                     fastConfig.getNotificationIconColor());
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) { 
-                startForeground(
-                    NOTIFICATION_ID, 
-                    notification, 
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                );
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    NOTIFICATION_ID, 
-                    notification, 
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                );
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
             } else {
                 startForeground(NOTIFICATION_ID, notification);
             }
@@ -261,7 +244,11 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        promoteToForegroundSynchronously();
+        if (intent != null && LocationServiceIntentBuilder.containsCommand(intent)) {
+            promoteToForegroundSynchronously();
+        } else {
+            logger.info("Ghost execution intent detected. Skipping immediate foreground promotion.");
+        }
 
         Message message = mPipelineHandler.obtainMessage(PipelineMsg.PROCESS_INTENT, intent);
         mPipelineHandler.sendMessage(message);
@@ -270,6 +257,25 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
     }
 
     private void handleIntentOnPipeline(@Nullable Intent intent) {
+        Setting setting = getSetting();
+        if (setting == null || !setting.isStarted()) {
+            logger.warn("Pipeline: Confirmed tracking is disabled. Dismantling ghost service context.");
+            
+            new Handler(Looper.getMainLooper()).post(new Runnable() {
+                @Override
+                public void run() {
+                    // 🛡️ MEMORY SHIELD: Purge all timers and locks before tearing down process context
+                    if (mWatchdogRunnable != null) {
+                        mWatchdogHandler.removeCallbacks(mWatchdogRunnable);
+                    }
+                    safelyReleaseWakeLock();
+                    stopForeground(true); 
+                    stopSelf();           
+                }
+            });
+            return; 
+        }
+
         if (intent == null || !containsCommand(intent)) {
             start();
             return;
@@ -333,6 +339,8 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             mProvider.onStart();
             sIsRunning = true;
             logger.info("Location provider started successfully on pipeline.");
+
+            resetWatchdogTimer();
         } catch (Exception e) {
             logger.error("Failed to start location provider", e);
         }
@@ -354,30 +362,25 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             if (config != null) {
                 mConfig = config;
             } else {
-
                 try {
                     ConfigurationDAO configDAO = DAOFactory.createConfigurationDAO(LocationServiceImpl.this);
                     mConfig = configDAO.retrieveConfiguration();
                 } catch (Exception e) {
                     logger.info("Failed to read configuration database layer cache.", e);
                 }
-
                 if (mConfig == null) {
                     mConfig = Config.getDefault();
                 }
             }
-
             if (mPostLocationTask != null) {
                 mPostLocationTask.setConfig(mConfig);
             }
         }
 
         final Config currentConfig = (mConfig != null) ? mConfig : config;
-
         if (config != null) {
             mConfig = config;
         }
-
         if (mPostLocationTask != null) {
             mPostLocationTask.setConfig(mConfig);
         }
@@ -437,9 +440,18 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
 
     @Override
     public void onLocation(BackgroundLocation location) {
+        if (wakeLock != null) {
+            wakeLock.acquire(15000); 
+            logger.debug("Power Optimization: Pulsed WakeLock engaged for 15 seconds.");
+        }
+        resetWatchdogTimer();
+
         logger.debug("New location received: {}", location.toString());
         location = transformLocation(location);
-        if (location == null) return;
+        if (location == null) {
+            safelyReleaseWakeLock();
+            return;
+        }
 
         Bundle bundle = new Bundle();
         bundle.putInt("action", MSG_ON_LOCATION);
@@ -452,13 +464,22 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         });
 
         postLocation(location);
+        safelyReleaseWakeLock();
     }
 
     @Override
     public void onStationary(BackgroundLocation location) {
+        if (wakeLock != null) {
+            wakeLock.acquire(15000); 
+        }
+        resetWatchdogTimer();
+
         logger.debug("New stationary heartbeat ping received natively: {}", location.toString());
         location = transformLocation(location);
-        if (location == null) return;
+        if (location == null) {
+            safelyReleaseWakeLock();
+            return;
+        }
 
         Bundle bundle = new Bundle();
         bundle.putInt("action", MSG_ON_STATIONARY);
@@ -472,6 +493,8 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
 
         postLocation(location);
         scheduleNetworkSync(true); 
+
+        safelyReleaseWakeLock();
     }
 
     @Override
@@ -508,13 +531,9 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
     }
 
     private void scheduleNetworkSync(boolean forceImmediate) {
-        logger.warn(
-                "scheduleNetworkSync(force={})",
-                forceImmediate
-        );
+        logger.warn("scheduleNetworkSync(force=" + forceImmediate + ")");
 
         long now = SystemClock.elapsedRealtime();
-
         if (now - lastNetworkSyncTime > 30_000) {
             lastNetworkSyncTime = now;
             scheduleNetworkSync(true);
@@ -533,9 +552,19 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
                 .setInputData(inputData)
                 .build();
 
+        Config config = getConfig();
+        ExistingWorkPolicy optimalPolicy = ExistingWorkPolicy.KEEP; 
+        
+        if (config.getUrl() != null && !config.getUrl().isEmpty()) {
+            optimalPolicy = ExistingWorkPolicy.REPLACE; 
+            logger.debug("Real-time URL detected: Utilizing REPLACE policy to ensure immediate delivery.");
+        } else {
+            logger.debug("Batch syncUrl detected: Utilizing KEEP policy to optimize battery lifecycle.");
+        }
+
         WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
                 "LocationSyncJob",
-                ExistingWorkPolicy.APPEND_OR_REPLACE,
+                optimalPolicy,
                 syncRequest
         );
     }
@@ -543,13 +572,17 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
     @Override
     public void onDestroy() {
         logger.info("Destroying LocationServiceImpl clean-up stack active.");
-//        if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+
+        if (mWatchdogRunnable != null) {
+            mWatchdogHandler.removeCallbacks(mWatchdogRunnable);
+        }
+        safelyReleaseWakeLock();
+
         if (mProvider != null) mProvider.onDestroy();
         if (mPipelineThread != null) mPipelineThread.quitSafely();
         if (mPostLocationTask != null) mPostLocationTask.shutdown();
 
         try {
-           // unregisterReceiver(connectivityChangeReceiver);
             if (connectivityManager != null && networkCallback != null) {
                 connectivityManager.unregisterNetworkCallback(networkCallback);
             }
@@ -560,14 +593,23 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
     }
 
     @Override public synchronized void startForegroundService() { start(); }
+    
     @Override public synchronized void stop() {
         if (!sIsRunning) return;
+
+        if (mWatchdogRunnable != null) {
+            mWatchdogHandler.removeCallbacks(mWatchdogRunnable);
+            logger.info("Watchdog timer disarmed cleanly.");
+        }
+        safelyReleaseWakeLock();
+
         if (mProvider != null) mProvider.onStop();
         stopForeground(true);
         stopSelf();
         broadcastMessage(MSG_ON_SERVICE_STOPPED);
         sIsRunning = false;
     }
+
     @Override public void startForeground() {
         if (sIsRunning && !mIsInForeground) {
             Config config = getConfig();
@@ -578,17 +620,9 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             if (mProvider != null) mProvider.onCommand(LocationProvider.CMD_SWITCH_MODE, LocationProvider.FOREGROUND_MODE);
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    startForeground(
-                        NOTIFICATION_ID, 
-                        notification, 
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION | ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                    );
+                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION | ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
                 } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    startForeground(
-                        NOTIFICATION_ID, 
-                        notification, 
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-                    );
+                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
                 } else {
                     startForeground(NOTIFICATION_ID, notification);
                 }
@@ -596,6 +630,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             } catch (Exception e) { logger.error("Foreground Error: ", e); }
         }
     }
+
     @Override public synchronized void stopForeground() {
         if (sIsRunning && mIsInForeground) {
             stopForeground(true);
@@ -603,6 +638,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             mIsInForeground = false;
         }
     }
+
     @Override public void onTaskRemoved(Intent rootIntent) {
         Config config = getConfig();
         Setting setting = getSetting();
@@ -611,12 +647,14 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         }
         super.onTaskRemoved(rootIntent);
     }
+
     @Override
     public IBinder onBind(Intent intent) {
         sActiveBindCount++;
         logger.debug("Client binds to service. Active bind count: " + sActiveBindCount);
         return mBinder;
     }
+
     @Override
     public void onRebind(Intent intent) {
         sActiveBindCount++;
@@ -632,9 +670,11 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         logger.debug("Client unbinds from service. Active bind count: " + sActiveBindCount);
         return true; 
     }
+
     private void processMessage(String message) {}
     @Override public void setting(Setting setting) { mSetting = setting; }
     @Override public synchronized void registerHeadlessTask(String r) { mHeadlessTaskRunnerClass = r; }
+    
     @Override public synchronized void startHeadlessTask() {
         if (mHeadlessTaskRunnerClass != null) {
             try {
@@ -643,17 +683,22 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             } catch (Exception e) { logger.error("Headless start failed: ", e); }
         }
     }
+
     @Override public synchronized void stopHeadlessTask() { mHeadlessTaskRunner = null; }
+    
     @Override public synchronized void executeProviderCommand(final int c, final int a1) {
         if (mProvider == null) return;
         mPipelineHandler.post(() -> mProvider.onCommand(c, a1));
     }
+
     private void broadcastMessage(int msgId) { Bundle b = new Bundle(); b.putInt("action", msgId); broadcastMessage(b); }
+    
     private void broadcastMessage(Bundle bundle) {
         Intent intent = new Intent(ACTION_BROADCAST);
         intent.putExtras(bundle);
         LocalBroadcastManager.getInstance(getApplicationContext()).sendBroadcast(intent);
     }
+
     @Override public Intent registerReceiver(BroadcastReceiver r, IntentFilter f) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             return super.registerReceiver(r, f, null, mPipelineHandler, Context.RECEIVER_NOT_EXPORTED);
@@ -661,19 +706,23 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             return super.registerReceiver(r, f, null, mPipelineHandler);
         }
     }
+
     @Override public void unregisterReceiver(BroadcastReceiver receiver) { try { super.unregisterReceiver(receiver); } catch (Exception e) {} }
+    
     public Config getConfig() {
         if (mConfig != null) return mConfig;
         try { mConfig = DAOFactory.createConfigurationDAO(this).retrieveConfiguration(); } catch (Exception e) {}
         if (mConfig == null) mConfig = Config.getDefault();
         return mConfig;
     }
+
     public Setting getSetting() {
         if (mSetting != null) return mSetting;
         try { mSetting = DAOFactory.createSettingDAO(this).retrieveSetting(); } catch (Exception e) {}
         if (mSetting == null) mSetting = Setting.getDefault();
         return mSetting;
     }
+
     private void runHeadlessTask(Task t) { if (mHeadlessTaskRunner != null) mHeadlessTaskRunner.runTask(t); }
     private BackgroundLocation transformLocation(BackgroundLocation l) { return (sLocationTransform != null) ? sLocationTransform.transformLocationBeforeCommit(this, l) : l; }
     private void postLocation(BackgroundLocation l) { mPostLocationTask.add(l); }
@@ -689,37 +738,74 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
 
     private boolean isNetworkAvailable() {
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-
-        if (cm == null) {
-            return false;
-        }
+        if (cm == null) return false;
 
         Network network = cm.getActiveNetwork();
+        if (network == null) return false;
 
-        if (network == null) {
-            return false;
+        NetworkCapabilities capabilities = cm.getNetworkCapabilities(network);
+        return capabilities != null
+                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+    }
+
+    /**
+     * WATCHDOG ENFORCEMENT ENGINE
+     * Runs completely on existing UI Looper threads to guarantee 0% extra battery idle footprint.
+     */
+    private void resetWatchdogTimer() {
+        if (mWatchdogRunnable != null) {
+            mWatchdogHandler.removeCallbacks(mWatchdogRunnable);
         }
 
-        NetworkCapabilities capabilities =
-                cm.getNetworkCapabilities(network);
+        mWatchdogRunnable = new Runnable() {
+            @Override
+            public void run() {
+                synchronized (LocationServiceImpl.this) {
+                    if (sIsRunning && mProvider != null) {
+                        logger.warn("⚠️ Watchdog Triggered: No GPS ticks for 5 minutes during drive. Recycling hardware binders!");
+                        try {
+                            mProvider.onStop();
+                            mProvider.onDestroy();
+                            
+                            LocationProviderFactory spf = new LocationProviderFactory(LocationServiceImpl.this);
+                            mProvider = spf.getInstance(getConfig().getLocationProvider());
+                            mProvider.setDelegate(LocationServiceImpl.this);
+                            mProvider.onCreate();
+                            mProvider.onConfigure(getConfig());
+                            mProvider.onStart();
+                            
+                            logger.info("Watchdog: Hard reset complete. Binders recovered smoothly.");
+                        } catch (Exception e) {
+                            logger.error("Watchdog: Failed to forcefully recycle hardware provider context", e);
+                        }
+                        
+                        mWatchdogHandler.postDelayed(this, WATCHDOG_TIMEOUT);
+                    }
+                }
+            }
+        };
 
-        return capabilities != null
-                && capabilities.hasCapability(
-                android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET
-        )
-                && capabilities.hasCapability(
-                android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED
-        );
-//        ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-//        if (cm == null) return false;
-//        NetworkInfo activeNetwork = cm.getActiveNetworkInfo();
-//        return activeNetwork != null && activeNetwork.isConnectedOrConnecting();
+        mWatchdogHandler.postDelayed(mWatchdogRunnable, WATCHDOG_TIMEOUT);
     }
+
+    private void safelyReleaseWakeLock() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+                logger.debug("Power Optimization: Pulsed WakeLock released cleanly.");
+            }
+        } catch (Exception e) {
+            
+        }
+    }
+
     private final BroadcastReceiver connectivityChangeReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             boolean hasConnectivity = isNetworkAvailable();
             mPostLocationTask.setHasConnectivity(hasConnectivity);
         }
     };
+
     public class LocalBinder extends Binder { public LocationServiceImpl getService() { return LocationServiceImpl.this; } }
 }
