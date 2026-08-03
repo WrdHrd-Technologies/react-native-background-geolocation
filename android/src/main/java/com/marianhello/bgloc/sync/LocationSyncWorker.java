@@ -1,6 +1,8 @@
 package com.marianhello.bgloc.sync;
 
 import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
@@ -15,10 +17,13 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
+import androidx.concurrent.futures.CallbackToFutureAdapter; // Required dependency
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+import androidx.work.ForegroundInfo; // Required
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
+import com.google.common.util.concurrent.ListenableFuture; // Required
 import com.marianhello.bgloc.Config;
 import com.marianhello.bgloc.HttpPostService;
 import com.marianhello.bgloc.Setting;
@@ -54,6 +59,40 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
         this.batchManager = new BatchManager(context);
         this.notificationManager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         this.mainThreadHandler = new Handler(Looper.getMainLooper());
+    }
+
+    /**
+     * Required by WorkManager to prevent crashes when executing Expedited WorkRequests.
+     */
+    @NonNull
+    @Override
+    public ListenableFuture<ForegroundInfo> getForegroundInfoAsync() {
+        return CallbackToFutureAdapter.getFuture(completer -> {
+            Context context = getApplicationContext();
+            
+            // Explicitly ensure the Notification Channel exists for Android O+ 
+            // before delivering ForegroundInfo to the system.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel channel = new NotificationChannel(
+                        NotificationHelper.SYNC_CHANNEL_ID,
+                        "Location Synchronization",
+                        NotificationManager.IMPORTANCE_LOW
+                );
+                if (notificationManager != null) {
+                    notificationManager.createNotificationChannel(channel);
+                }
+            }
+
+            // Fallback notification configuration if build parameters are not initialized yet
+            Notification notification = new NotificationCompat.Builder(context, NotificationHelper.SYNC_CHANNEL_ID)
+                    .setContentTitle("Syncing locations")
+                    .setContentText("Sync in progress")
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .build();
+
+            completer.set(new ForegroundInfo(NOTIFICATION_ID, notification));
+            return "LocationSyncWorkerForegroundInfo";
+        });
     }
 
     @NonNull

@@ -703,7 +703,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             return super.registerReceiver(r, f, null, mPipelineHandler, Context.RECEIVER_NOT_EXPORTED);
         } else {
-            return super.registerReceiver(r, f, null, mPipelineHandler);
+            return super.registerReceiver(r, f);
         }
     }
 

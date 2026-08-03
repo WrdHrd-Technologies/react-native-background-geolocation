@@ -42,7 +42,6 @@ public class UpgradeReceiver extends BroadcastReceiver {
                     ExistingWorkPolicy.REPLACE, 
                     resurrectionRequest
             );
-            Log.info(TAG, "Resurrection task successfully offloaded to background worker channels.");
         } catch (Exception e) {
             Log.e(TAG, "Failed to schedule tracking restoration pipeline with WorkManager.", e);
         }

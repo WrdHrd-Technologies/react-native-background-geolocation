@@ -42,7 +42,6 @@ public class BootCompletedReceiver extends BroadcastReceiver {
                     ExistingWorkPolicy.REPLACE, 
                     bootRequest
             );
-            Log.info(TAG, "Boot resurrection task successfully offloaded to background worker channels.");
         } catch (Exception e) {
             Log.e(TAG, "Failed to schedule tracking boot restoration pipeline with WorkManager.", e);
         }

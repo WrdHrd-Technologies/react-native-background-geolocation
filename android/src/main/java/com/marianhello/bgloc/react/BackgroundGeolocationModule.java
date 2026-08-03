@@ -122,7 +122,10 @@ public class BackgroundGeolocationModule extends ReactContextBaseJavaModule impl
     @Override
     public void onHostResume() {
         if (getContext() == null || facade == null) return;
-        logger.info("App will be resumed");
+        if (logger != null) {
+            logger.info("Application host resumed.");
+        }
+
         facade.resume();
         sendEvent(FOREGROUND_EVENT, null);
     }

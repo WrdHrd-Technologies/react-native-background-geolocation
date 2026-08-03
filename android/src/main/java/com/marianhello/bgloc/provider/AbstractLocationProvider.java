@@ -168,14 +168,21 @@ public abstract class AbstractLocationProvider implements LocationProvider {
     }
 
     public Boolean hasMockLocationsEnabled(Location location) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            return location != null && location.isMock();
-        }
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            return location != null && location.isFromMockProvider();
+        if (location == null) {
+            return false;
         }
 
+        // Android 12 (API 31) and above
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) { 
+            return location.isMock();
+        }
+    
+        // Android 6.0 (API 23) to Android 11 (API 30)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return location.isFromMockProvider();
+        }
+
+        // Android 5.1 and below (Legacy fallback)
         try {
             String value = Settings.Secure.getString(mContext.getContentResolver(), "mock_location");
             return "1".equals(value);

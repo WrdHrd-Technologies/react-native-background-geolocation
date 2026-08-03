@@ -16,7 +16,7 @@
             
         <service 
             android:name="com.marianhello.bgloc.react.headless.HeadlessService" 
-            android:enabled="true" 
+            android:foregroundServiceType="location|dataSync"
             android:exported="false" />
         
         <receiver 
