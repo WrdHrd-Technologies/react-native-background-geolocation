@@ -1,8 +1,6 @@
 package com.marianhello.bgloc.sync;
 
 import android.Manifest;
-import android.app.Notification;
-import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
@@ -17,13 +15,10 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
-import androidx.concurrent.futures.CallbackToFutureAdapter; // Required dependency
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
-import androidx.work.ForegroundInfo; // Required
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
-import com.google.common.util.concurrent.ListenableFuture; // Required
 import com.marianhello.bgloc.Config;
 import com.marianhello.bgloc.HttpPostService;
 import com.marianhello.bgloc.Setting;
@@ -66,33 +61,49 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
      */
     @NonNull
     @Override
-    public ListenableFuture<ForegroundInfo> getForegroundInfoAsync() {
-        return CallbackToFutureAdapter.getFuture(completer -> {
-            Context context = getApplicationContext();
-            
-            // Explicitly ensure the Notification Channel exists for Android O+ 
-            // before delivering ForegroundInfo to the system.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                NotificationChannel channel = new NotificationChannel(
-                        NotificationHelper.SYNC_CHANNEL_ID,
-                        "Location Synchronization",
-                        NotificationManager.IMPORTANCE_LOW
-                );
-                if (notificationManager != null) {
-                    notificationManager.createNotificationChannel(channel);
+    public com.google.common.util.concurrent.ListenableFuture<androidx.work.ForegroundInfo> getForegroundInfoAsync() {
+        Context context = getApplicationContext();
+
+        NotificationHelper.registerSyncChannel(context);
+
+        int appIconResId = context.getApplicationInfo().icon;
+        if (appIconResId == 0) {
+            appIconResId = android.R.drawable.sym_def_app_icon;
+        }
+
+        android.app.Notification notification = new NotificationCompat.Builder(context, NotificationHelper.SYNC_CHANNEL_ID)
+                .setContentTitle("Syncing locations")
+                .setContentText("Sync in progress")
+                .setSmallIcon(appIconResId)
+                .setOngoing(true)
+                .setLocalOnly(true)
+                .build();
+
+        final androidx.work.ForegroundInfo foregroundInfo = new androidx.work.ForegroundInfo(NOTIFICATION_ID, notification);
+
+        return new com.google.common.util.concurrent.ListenableFuture<androidx.work.ForegroundInfo>() {
+            @Override
+            public void addListener(Runnable listener, java.util.concurrent.Executor executor) {
+                if (listener != null && executor != null) {
+                    executor.execute(listener);
                 }
             }
 
-            // Fallback notification configuration if build parameters are not initialized yet
-            Notification notification = new NotificationCompat.Builder(context, NotificationHelper.SYNC_CHANNEL_ID)
-                    .setContentTitle("Syncing locations")
-                    .setContentText("Sync in progress")
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .build();
+            @Override
+            public boolean cancel(boolean mayInterruptIfRunning) { return false; }
 
-            completer.set(new ForegroundInfo(NOTIFICATION_ID, notification));
-            return "LocationSyncWorkerForegroundInfo";
-        });
+            @Override
+            public boolean isCancelled() { return false; }
+
+            @Override
+            public boolean isDone() { return true; }
+
+            @Override
+            public androidx.work.ForegroundInfo get() { return foregroundInfo; }
+
+            @Override
+            public androidx.work.ForegroundInfo get(long timeout, @NonNull java.util.concurrent.TimeUnit unit) { return foregroundInfo; }
+        };
     }
 
     @NonNull
