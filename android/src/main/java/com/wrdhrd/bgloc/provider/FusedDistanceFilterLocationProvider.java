@@ -12,7 +12,6 @@ import android.location.Location;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
-import android.os.Looper;
 
 import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
@@ -21,8 +20,8 @@ import androidx.core.content.ContextCompat;
 import com.google.android.gms.location.ActivityRecognition;
 import com.google.android.gms.location.ActivityTransition;
 import com.google.android.gms.location.ActivityTransitionEvent;
-import com.google.android.gms.location.ActivityTransitionResult;
 import com.google.android.gms.location.ActivityTransitionRequest;
+import com.google.android.gms.location.ActivityTransitionResult;
 import com.google.android.gms.location.DetectedActivity;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.Geofence;
@@ -41,7 +40,6 @@ import com.marianhello.utils.ToneGenerator;
 
 import java.util.ArrayList;
 import java.util.List;
-
 
 public final class FusedDistanceFilterLocationProvider extends AbstractLocationProvider {
     private static final String TAG = "HybridProvider";
@@ -92,8 +90,16 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
         mWorkerHandler = new Handler(mWorkerThread.getLooper());
 
         int receiverFlags = ContextCompat.RECEIVER_NOT_EXPORTED;
-        mContext.registerReceiver(mHybridGeofenceReceiver, new IntentFilter(ACTION_HYBRID_GEOFENCE), receiverFlags);
-        mContext.registerReceiver(mHybridActivityReceiver, new IntentFilter(ACTION_HYBRID_ACTIVITY), receiverFlags);
+        IntentFilter geofenceFilter = new IntentFilter(ACTION_HYBRID_GEOFENCE);
+        IntentFilter activityFilter = new IntentFilter(ACTION_HYBRID_ACTIVITY);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            mContext.registerReceiver(mHybridGeofenceReceiver, geofenceFilter, receiverFlags);
+            mContext.registerReceiver(mHybridActivityReceiver, activityFilter, receiverFlags);
+        } else {
+            mContext.registerReceiver(mHybridGeofenceReceiver, geofenceFilter);
+            mContext.registerReceiver(mHybridActivityReceiver, activityFilter);
+        }
 
         mFusedLocationCallback = new LocationCallback() {
             @Override
@@ -249,7 +255,7 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
                 .setWaitForAccurateLocation(false)
                 .build();
 
-        mFusedLocationClient.requestLocationUpdates(activeRequest, mFusedLocationCallback ,mWorkerHandler.getLooper());
+        mFusedLocationClient.requestLocationUpdates(activeRequest, mFusedLocationCallback, mWorkerHandler.getLooper());
     }
 
     @SuppressLint("MissingPermission")
@@ -287,7 +293,7 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
                 LocationRequest passiveSentryRequest = new LocationRequest.Builder(Priority.PRIORITY_PASSIVE, 300000)
                         .setMaxUpdateDelayMillis(600000)
                         .build();
-                mFusedLocationClient.requestLocationUpdates(passiveSentryRequest,mFusedLocationCallback, mWorkerHandler.getLooper());
+                mFusedLocationClient.requestLocationUpdates(passiveSentryRequest, mFusedLocationCallback, mWorkerHandler.getLooper());
 
                 deployHybridTripwires();
             }
@@ -303,7 +309,7 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
         Location origin = (lastLocation != null) ? lastLocation : stationaryLocation;
         if (origin == null) {
             mFusedLocationClient.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, null)
-                    .addOnSuccessListener(mContext.getMainExecutor(), loc -> {
+                    .addOnSuccessListener(mWorkerHandler::post, loc -> {
                         if (loc != null) {
                             stationaryLocation = loc;
                             deployHybridTripwires();
@@ -354,26 +360,30 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
 
     private PendingIntent getGeofencePendingIntent() {
         if (mGeofencePendingIntent != null) return mGeofencePendingIntent;
-        Intent intent = new Intent(ACTION_HYBRID_GEOFENCE).setPackage(mContext.getPackageName());
-        
+
+        Intent intent = new Intent(ACTION_HYBRID_GEOFENCE);
+        intent.setPackage(mContext.getPackageName());
+
         int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            flags |= PendingIntent.FLAG_MUTABLE; 
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            flags |= 0x02000000;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
         }
+
         mGeofencePendingIntent = PendingIntent.getBroadcast(mContext, 1001, intent, flags);
         return mGeofencePendingIntent;
     }
 
     private PendingIntent getActivityPendingIntent() {
         if (mActivityPendingIntent != null) return mActivityPendingIntent;
-        Intent intent = new Intent(ACTION_HYBRID_ACTIVITY).setPackage(mContext.getPackageName());
+
+        Intent intent = new Intent(ACTION_HYBRID_ACTIVITY);
+        intent.setPackage(mContext.getPackageName());
 
         int flags = PendingIntent.FLAG_UPDATE_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             flags |= PendingIntent.FLAG_IMMUTABLE;
         }
+
         mActivityPendingIntent = PendingIntent.getBroadcast(mContext, 1002, intent, flags);
         return mActivityPendingIntent;
     }

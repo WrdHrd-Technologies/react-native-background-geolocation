@@ -15,17 +15,18 @@ import com.marianhello.bgloc.sync.LocationSyncWorker;
 import com.marianhello.utils.RealTimeHelper;
 
 public class UpgradeReceiver extends BroadcastReceiver {
-    private static final String TAG = UpgradeReceiver.class.getName();
+    private static final String TAG = "UpgradeReceiver";
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        if (intent == null || !Intent.ACTION_MY_PACKAGE_REPLACED.equals(intent.getAction())) {
+        if (context == null || intent == null || !Intent.ACTION_MY_PACKAGE_REPLACED.equals(intent.getAction())) {
             return;
         }
 
-        Log.i(TAG, "Application upgraded in place. Offloading verification and resurrection to WorkManager background thread.");
+        Log.i(TAG, "Application upgraded in place. Offloading resurrection to WorkManager.");
 
-        RealTimeHelper.initialize(context);
+        Context appContext = context.getApplicationContext();
+        RealTimeHelper.initialize(appContext);
 
         Data inputData = new Data.Builder()
                 .putBoolean("resurrect_service", true)
@@ -37,7 +38,7 @@ public class UpgradeReceiver extends BroadcastReceiver {
                 .build();
 
         try {
-            WorkManager.getInstance(context.getApplicationContext()).enqueueUniqueWork(
+            WorkManager.getInstance(appContext).enqueueUniqueWork(
                     "LocationSyncJob",
                     ExistingWorkPolicy.REPLACE, 
                     resurrectionRequest

@@ -124,15 +124,18 @@ public class DistanceFilterLocationProvider extends AbstractLocationProvider imp
     private void registerTrackingReceivers() {
         if (mReceiversRegistered) return;
 
-        int receiverFlags = 0;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            receiverFlags = Context.RECEIVER_NOT_EXPORTED;
+            int flags = Context.RECEIVER_NOT_EXPORTED;
+            mContext.registerReceiver(stationaryAlarmReceiver, new IntentFilter(STATIONARY_ALARM_ACTION), flags);
+            mContext.registerReceiver(stationaryRegionReceiver, new IntentFilter(STATIONARY_REGION_ACTION), flags);
+            mContext.registerReceiver(stationaryLocationMonitorReceiver, new IntentFilter(STATIONARY_LOCATION_MONITOR_ACTION), flags);
+            mContext.registerReceiver(singleUpdateReceiver, new IntentFilter(SINGLE_LOCATION_UPDATE_ACTION), flags);
+        } else {
+            mContext.registerReceiver(stationaryAlarmReceiver, new IntentFilter(STATIONARY_ALARM_ACTION));
+            mContext.registerReceiver(stationaryRegionReceiver, new IntentFilter(STATIONARY_REGION_ACTION));
+            mContext.registerReceiver(stationaryLocationMonitorReceiver, new IntentFilter(STATIONARY_LOCATION_MONITOR_ACTION));
+            mContext.registerReceiver(singleUpdateReceiver, new IntentFilter(SINGLE_LOCATION_UPDATE_ACTION));
         }
-
-        mContext.registerReceiver(stationaryAlarmReceiver, new IntentFilter(STATIONARY_ALARM_ACTION), receiverFlags);
-        mContext.registerReceiver(stationaryRegionReceiver, new IntentFilter(STATIONARY_REGION_ACTION), receiverFlags);
-        mContext.registerReceiver(stationaryLocationMonitorReceiver, new IntentFilter(STATIONARY_LOCATION_MONITOR_ACTION), receiverFlags);
-        mContext.registerReceiver(singleUpdateReceiver, new IntentFilter(SINGLE_LOCATION_UPDATE_ACTION), receiverFlags);
 
         mReceiversRegistered = true;
     }

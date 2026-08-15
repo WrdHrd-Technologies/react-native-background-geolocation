@@ -10,7 +10,8 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:7.4.2' 
+        // Updated Android Gradle Plugin to match modern AGP versions
+        classpath 'com.android.tools.build:gradle:8.2.2' 
     }
 }
 
@@ -30,39 +31,60 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         minSdkVersion safeExtGet('minSdkVersion', 24)
         targetSdkVersion safeExtGet('targetSdkVersion', 34)
+        
+        // Ensure consumer pro-rules don't strip background service models
+        consumerProguardFiles "consumer-rules.pro"
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
+        // Modernized compatibility to Java 17 for AGP 8.x+ compatibility
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
 
     lintOptions {
         abortOnError false
     }
+
+    configurations.all {
+        resolutionStrategy.eachDependency { details ->
+            if (details.requested.group == 'com.google.android.gms') {
+                if (details.requested.name == 'play-services-location') {
+                    details.useVersion '21.0.1'
+                }
+            }
+        }
+    }
 }
 
 dependencies {
     implementation 'com.facebook.react:react-native:+'
+    
+    // Core AndroidX Dependencies
     implementation "androidx.appcompat:appcompat:${safeExtGet('appCompatVersion', '1.6.1')}"
     implementation "androidx.core:core:${safeExtGet('coreVersion', '1.12.0')}"
+    
+    // Explicit WorkManager 2.9.0+ fixes the SystemJobService.onNetworkChanged error
     implementation "androidx.work:work-runtime:${safeExtGet('workVersion', '2.9.0')}"
     implementation 'androidx.localbroadcastmanager:localbroadcastmanager:1.1.0'
 
+    // Google Play Services Location
     implementation "com.google.android.gms:play-services-location:${safeExtGet('playServicesLocationVersion', '21.2.0')}"
 
+    // Logging & Utility Suite
     implementation "com.github.suman379:RealTime:master-SNAPSHOT" 
-    implementation 'com.github.tony19:logback-android:2.0.0'
-    implementation 'org.slf4j:slf4j-api:1.7.36'
+    implementation 'com.github.tony19:logback-android:3.0.0'
+    implementation 'org.slf4j:slf4j-api:2.0.9'
     implementation 'com.github.jparkie:promise:1.0.3'
+    
     implementation('io.github.nishkarsh:android-permissions:0.1.7') {
         exclude group: 'com.android.support', module: 'appcompat-v7'
     }
 
     // Testing Suite
     testImplementation 'junit:junit:4.13.2'
-    testImplementation 'org.mockito:mockito-core:4.11.0'
-    testImplementation 'org.robolectric:robolectric:4.10.3'
+    testImplementation 'org.mockito:mockito-core:5.8.0'
+    testImplementation 'org.robolectric:robolectric:4.11.1'
     androidTestImplementation 'androidx.test:runner:1.5.2'
     androidTestImplementation 'androidx.test:rules:1.5.0'
 }

@@ -25,7 +25,6 @@ import android.os.SystemClock;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.core.app.NotificationCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 import androidx.work.Constraints;
 import androidx.work.Data;
@@ -229,9 +228,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
                     fastConfig.getSmallNotificationIcon(),
                     fastConfig.getNotificationIconColor());
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) { 
-                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
             } else {
                 startForeground(NOTIFICATION_ID, notification);
@@ -264,7 +261,6 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             new Handler(Looper.getMainLooper()).post(new Runnable() {
                 @Override
                 public void run() {
-                    // 🛡️ MEMORY SHIELD: Purge all timers and locks before tearing down process context
                     if (mWatchdogRunnable != null) {
                         mWatchdogHandler.removeCallbacks(mWatchdogRunnable);
                     }
@@ -521,12 +517,18 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         mPostLocationTask.add(error);
 
         if (error.getCode() == PluginException.PERMISSION_DENIED_ERROR) {
-            NotificationCompat.Builder builder = new NotificationCompat.Builder(LocationServiceImpl.this, NotificationHelper.ANDROID_PERMISSIONS_CHANNEL_ID)
-                    .setContentTitle("Permission Denied")
-                    .setContentText("Location access is denied. Dynamic asset tracking requires explicit background authorization.")
-                    .setSmallIcon(android.R.drawable.ic_dialog_info);
+            NotificationHelper.registerAllChannels(this);
+        
+            NotificationHelper.NotificationFactory factory = new NotificationHelper.NotificationFactory(this);
+            Notification notification = factory.getPermissionDeniedNotification(
+                "Permission Denied", 
+                "Location access is denied. Dynamic asset tracking requires explicit background authorization."
+            );
+
             NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-            if (manager != null) manager.notify(PERMISSION_NOTIFICATION_ID, builder.build());
+            if (manager != null) {
+                manager.notify(PERMISSION_NOTIFICATION_ID, notification);
+            }
         }
     }
 
@@ -534,10 +536,11 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         logger.warn("scheduleNetworkSync(force=" + forceImmediate + ")");
 
         long now = SystemClock.elapsedRealtime();
-        if (now - lastNetworkSyncTime > 30_000) {
-            lastNetworkSyncTime = now;
-            scheduleNetworkSync(true);
+        if (!forceImmediate && (now - lastNetworkSyncTime < 30_000)) {
+            logger.debug("Network sync throttled. Last sync was less than 30s ago.");
+            return;
         }
+        lastNetworkSyncTime = now;
 
         Constraints constraints = new Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
@@ -603,6 +606,13 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         }
         safelyReleaseWakeLock();
 
+        try {
+            WorkManager.getInstance(getApplicationContext()).cancelUniqueWork("LocationSyncJob");
+            logger.info("LocationSyncJob WorkManager task cancelled cleanly on stop.");
+        } catch (Exception e) {
+            logger.error("Failed to cancel WorkManager sync task on service stop", e);
+        }
+
         if (mProvider != null) mProvider.onStop();
         stopForeground(true);
         stopSelf();
@@ -619,9 +629,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
                     config.getNotificationIconColor());
             if (mProvider != null) mProvider.onCommand(LocationProvider.CMD_SWITCH_MODE, LocationProvider.FOREGROUND_MODE);
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION | ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
                 } else {
                     startForeground(NOTIFICATION_ID, notification);
@@ -779,8 +787,6 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
                         } catch (Exception e) {
                             logger.error("Watchdog: Failed to forcefully recycle hardware provider context", e);
                         }
-                        
-                        mWatchdogHandler.postDelayed(this, WATCHDOG_TIMEOUT);
                     }
                 }
             }

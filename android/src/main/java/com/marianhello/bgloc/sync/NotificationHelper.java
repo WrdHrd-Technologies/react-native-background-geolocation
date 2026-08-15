@@ -108,7 +108,8 @@ public final class NotificationHelper {
 
             builder.setOngoing(true)
                    .setLocalOnly(true)
-                   .setShowWhen(true);
+                   .setShowWhen(true)
+                   .setPriority(NotificationCompat.PRIORITY_MAX); 
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 builder.setCategory(Notification.CATEGORY_NAVIGATION);
@@ -116,6 +117,133 @@ public final class NotificationHelper {
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE);
+            }
+
+            Notification notification = builder.build();
+            notification.flags |= Notification.FLAG_ONGOING_EVENT | Notification.FLAG_NO_CLEAR;
+
+            return notification;
+        }
+
+        /**
+         * Standard Non-Dismissible Sync Notification (HeadlessService / WorkManager getForegroundInfoAsync)
+         */
+        @NonNull
+        public Notification getSyncNotification(@Nullable String title, @Nullable String text) {
+            Context appContext = mContext;
+
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(appContext, NotificationHelper.SYNC_CHANNEL_ID);
+
+            builder.setContentTitle(title != null ? title : "Syncing locations")
+                   .setContentText(text != null ? text : "Sync in progress");
+
+            int defaultAppIcon = appContext.getApplicationInfo().icon;
+            builder.setSmallIcon(defaultAppIcon != 0 ? defaultAppIcon : android.R.drawable.sym_def_app_icon);
+
+            builder.setOngoing(true)
+                   .setLocalOnly(true)
+                   .setShowWhen(true)
+                   .setPriority(NotificationCompat.PRIORITY_MIN);
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE);
+            }
+
+            Notification notification = builder.build();
+            notification.flags |= Notification.FLAG_ONGOING_EVENT | Notification.FLAG_NO_CLEAR;
+
+            return notification;
+        }
+
+        /**
+         * Progress-enabled Sync Notification for Active Network Batches
+         */
+        @NonNull
+        public Notification getSyncProgressNotification(@Nullable String title, @Nullable String text, int progress) {
+            Context appContext = mContext;
+
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(appContext, NotificationHelper.SYNC_CHANNEL_ID);
+
+            builder.setContentTitle(title != null ? title : "Syncing locations")
+                   .setContentText(text != null ? text : "Sync in progress");
+
+            int defaultAppIcon = appContext.getApplicationInfo().icon;
+            builder.setSmallIcon(defaultAppIcon != 0 ? defaultAppIcon : android.R.drawable.sym_def_app_icon);
+
+            builder.setOngoing(true)
+                   .setOnlyAlertOnce(true)
+                   .setLocalOnly(true)
+                   .setPriority(NotificationCompat.PRIORITY_MIN);
+
+            if (progress >= 0) {
+                builder.setProgress(100, progress, false);
+            } else {
+                builder.setProgress(0, 0, true);
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE);
+            }
+
+            Notification notification = builder.build();
+            notification.flags |= Notification.FLAG_ONGOING_EVENT | Notification.FLAG_NO_CLEAR;
+
+            return notification;
+        }
+
+        /**
+         * Dismissible Completion Notification when Sync Finishes
+         */
+        @NonNull
+        public Notification getSyncCompletedNotification(@Nullable String title, @Nullable String text) {
+            Context appContext = mContext;
+
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(appContext, NotificationHelper.SYNC_CHANNEL_ID);
+
+            builder.setContentTitle(title != null ? title : "Syncing locations")
+                   .setContentText(text != null ? text : "Sync completed");
+
+            int defaultAppIcon = appContext.getApplicationInfo().icon;
+            builder.setSmallIcon(defaultAppIcon != 0 ? defaultAppIcon : android.R.drawable.sym_def_app_icon);
+
+            builder.setOngoing(false)
+                   .setAutoCancel(true)
+                   .setLocalOnly(true)
+                   .setPriority(NotificationCompat.PRIORITY_MIN);
+
+            Notification notification = builder.build();
+            notification.flags &= ~Notification.FLAG_ONGOING_EVENT;
+            notification.flags &= ~Notification.FLAG_NO_CLEAR;
+
+            return notification;
+        }
+
+        /**
+         * Permission Alert Notification
+         */
+        @NonNull
+        public Notification getPermissionDeniedNotification(@Nullable String title, @Nullable String text) {
+            Context appContext = mContext;
+
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(appContext, NotificationHelper.ANDROID_PERMISSIONS_CHANNEL_ID);
+
+            builder.setContentTitle(title != null ? title : "Permission Required")
+                   .setContentText(text != null ? text : "Background location access is required.")
+                   .setSmallIcon(android.R.drawable.ic_dialog_info)
+                   .setPriority(NotificationCompat.PRIORITY_HIGH)
+                   .setAutoCancel(true);
+
+            Intent launchIntent = appContext.getPackageManager().getLaunchIntentForPackage(appContext.getPackageName());
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            
+                int pendingIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    pendingIntentFlags |= PendingIntent.FLAG_IMMUTABLE;
+                }
+            
+                PendingIntent contentIntent = PendingIntent.getActivity(appContext, 0, launchIntent, pendingIntentFlags);
+                builder.setContentIntent(contentIntent);
             }
 
             return builder.build();

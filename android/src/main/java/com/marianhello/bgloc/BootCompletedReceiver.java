@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
 
+import androidx.annotation.NonNull;
 import androidx.work.Data;
 import androidx.work.ExistingWorkPolicy;
 import androidx.work.OneTimeWorkRequest;
@@ -15,17 +16,25 @@ import com.marianhello.bgloc.sync.LocationSyncWorker;
 import com.marianhello.utils.RealTimeHelper;
 
 public class BootCompletedReceiver extends BroadcastReceiver {
-    private static final String TAG = BootCompletedReceiver.class.getName();
+    private static final String TAG = "BootCompletedReceiver";
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        if (intent == null || !Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
+        if (context == null || intent == null) {
             return;
         }
 
-        Log.i(TAG, "Device boot completed. Offloading verification and tracking recovery to WorkManager.");
+        String action = intent.getAction();
+        if (!Intent.ACTION_BOOT_COMPLETED.equals(action) 
+                && !"android.intent.action.QUICKBOOT_POWERON".equals(action)
+                && !"com.htc.intent.action.QUICKBOOT_POWERON".equals(action)) {
+            return;
+        }
 
-        RealTimeHelper.initialize(context);
+        Log.i(TAG, "Device boot completed [" + action + "]. Offloading tracking recovery to WorkManager.");
+
+        Context appContext = context.getApplicationContext();
+        RealTimeHelper.initialize(appContext);
 
         Data inputData = new Data.Builder()
                 .putBoolean("resurrect_on_boot", true)
@@ -37,7 +46,7 @@ public class BootCompletedReceiver extends BroadcastReceiver {
                 .build();
 
         try {
-            WorkManager.getInstance(context.getApplicationContext()).enqueueUniqueWork(
+            WorkManager.getInstance(appContext).enqueueUniqueWork(
                     "LocationSyncJob",
                     ExistingWorkPolicy.REPLACE, 
                     bootRequest
