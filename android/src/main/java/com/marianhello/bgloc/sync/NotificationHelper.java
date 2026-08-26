@@ -16,6 +16,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.core.app.NotificationCompat;
 
+import com.marianhello.bgloc.Config;
 import com.marianhello.bgloc.ResourceResolver;
 import com.marianhello.logging.LoggerManager;
 
@@ -25,7 +26,7 @@ public final class NotificationHelper {
     public static final String SERVICE_CHANNEL_ID = "bglocservice";
     public static final String ANDROID_PERMISSIONS_CHANNEL_ID = "android-permissions";
     public static final String SYNC_CHANNEL_ID = "syncservice";
-    
+
     public static final String SYNC_CHANNEL_NAME = "Sync Service";
     public static final String SYNC_CHANNEL_DESCRIPTION = "Shows sync progress";
 
@@ -55,6 +56,24 @@ public final class NotificationHelper {
             }
         }
 
+        /**
+         * Builds the Foreground Service Notification from the provided Config.
+         */
+        @NonNull
+        public Notification getServiceNotification(@Nullable Config config) {
+            String title = (config != null && config.getNotificationTitle() != null)
+                    ? config.getNotificationTitle()
+                    : "Tracking Active";
+            String text = (config != null && config.getNotificationText() != null)
+                    ? config.getNotificationText()
+                    : "Asset position pipeline active";
+            String largeIcon = (config != null) ? config.getLargeNotificationIcon() : null;
+            String smallIcon = (config != null) ? config.getSmallNotificationIcon() : null;
+            String color = (config != null) ? config.getNotificationIconColor() : null;
+
+            return getNotification(title, text, largeIcon, smallIcon, color);
+        }
+
         @NonNull
         public Notification getNotification(@Nullable String title, @Nullable String text, @Nullable String largeIcon, @Nullable String smallIcon, @Nullable String color) {
             Context appContext = mContext;
@@ -62,13 +81,13 @@ public final class NotificationHelper {
             NotificationCompat.Builder builder = new NotificationCompat.Builder(appContext, NotificationHelper.SERVICE_CHANNEL_ID);
 
             builder.setContentTitle(title != null ? title : "")
-                   .setContentText(text != null ? text : "");
+                    .setContentText(text != null ? text : "");
 
             int smallIconResId = 0;
             if (smallIcon != null && !smallIcon.isEmpty()) {
                 smallIconResId = mResolver.getDrawable(smallIcon);
             }
-            
+
             if (smallIconResId != 0) {
                 builder.setSmallIcon(smallIconResId);
             } else {
@@ -96,19 +115,19 @@ public final class NotificationHelper {
             Intent launchIntent = appContext.getPackageManager().getLaunchIntentForPackage(packageName);
             if (launchIntent != null) {
                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                
+
                 int pendingIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT;
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     pendingIntentFlags |= PendingIntent.FLAG_IMMUTABLE;
                 }
-                
+
                 PendingIntent contentIntent = PendingIntent.getActivity(appContext, 0, launchIntent, pendingIntentFlags);
                 builder.setContentIntent(contentIntent);
             }
 
             builder.setOngoing(true)
-                   .setLocalOnly(true)
-                   .setShowWhen(true)
+                    .setLocalOnly(true)
+                    .setShowWhen(true)
                    .setPriority(NotificationCompat.PRIORITY_MAX); 
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -135,15 +154,15 @@ public final class NotificationHelper {
             NotificationCompat.Builder builder = new NotificationCompat.Builder(appContext, NotificationHelper.SYNC_CHANNEL_ID);
 
             builder.setContentTitle(title != null ? title : "Syncing locations")
-                   .setContentText(text != null ? text : "Sync in progress");
+                    .setContentText(text != null ? text : "Sync in progress");
 
             int defaultAppIcon = appContext.getApplicationInfo().icon;
             builder.setSmallIcon(defaultAppIcon != 0 ? defaultAppIcon : android.R.drawable.sym_def_app_icon);
 
             builder.setOngoing(true)
-                   .setLocalOnly(true)
-                   .setShowWhen(true)
-                   .setPriority(NotificationCompat.PRIORITY_MIN);
+                    .setLocalOnly(true)
+                    .setShowWhen(true)
+                    .setPriority(NotificationCompat.PRIORITY_MIN);
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE);
@@ -165,15 +184,15 @@ public final class NotificationHelper {
             NotificationCompat.Builder builder = new NotificationCompat.Builder(appContext, NotificationHelper.SYNC_CHANNEL_ID);
 
             builder.setContentTitle(title != null ? title : "Syncing locations")
-                   .setContentText(text != null ? text : "Sync in progress");
+                    .setContentText(text != null ? text : "Sync in progress");
 
             int defaultAppIcon = appContext.getApplicationInfo().icon;
             builder.setSmallIcon(defaultAppIcon != 0 ? defaultAppIcon : android.R.drawable.sym_def_app_icon);
 
             builder.setOngoing(true)
-                   .setOnlyAlertOnce(true)
-                   .setLocalOnly(true)
-                   .setPriority(NotificationCompat.PRIORITY_MIN);
+                    .setOnlyAlertOnce(true)
+                    .setLocalOnly(true)
+                    .setPriority(NotificationCompat.PRIORITY_MIN);
 
             if (progress >= 0) {
                 builder.setProgress(100, progress, false);
@@ -201,15 +220,15 @@ public final class NotificationHelper {
             NotificationCompat.Builder builder = new NotificationCompat.Builder(appContext, NotificationHelper.SYNC_CHANNEL_ID);
 
             builder.setContentTitle(title != null ? title : "Syncing locations")
-                   .setContentText(text != null ? text : "Sync completed");
+                    .setContentText(text != null ? text : "Sync completed");
 
             int defaultAppIcon = appContext.getApplicationInfo().icon;
             builder.setSmallIcon(defaultAppIcon != 0 ? defaultAppIcon : android.R.drawable.sym_def_app_icon);
 
             builder.setOngoing(false)
-                   .setAutoCancel(true)
-                   .setLocalOnly(true)
-                   .setPriority(NotificationCompat.PRIORITY_MIN);
+                    .setAutoCancel(true)
+                    .setLocalOnly(true)
+                    .setPriority(NotificationCompat.PRIORITY_MIN);
 
             Notification notification = builder.build();
             notification.flags &= ~Notification.FLAG_ONGOING_EVENT;
@@ -228,20 +247,20 @@ public final class NotificationHelper {
             NotificationCompat.Builder builder = new NotificationCompat.Builder(appContext, NotificationHelper.ANDROID_PERMISSIONS_CHANNEL_ID);
 
             builder.setContentTitle(title != null ? title : "Permission Required")
-                   .setContentText(text != null ? text : "Background location access is required.")
-                   .setSmallIcon(android.R.drawable.ic_dialog_info)
-                   .setPriority(NotificationCompat.PRIORITY_HIGH)
-                   .setAutoCancel(true);
+                    .setContentText(text != null ? text : "Background location access is required.")
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setAutoCancel(true);
 
             Intent launchIntent = appContext.getPackageManager().getLaunchIntentForPackage(appContext.getPackageName());
             if (launchIntent != null) {
                 launchIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            
+
                 int pendingIntentFlags = PendingIntent.FLAG_UPDATE_CURRENT;
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     pendingIntentFlags |= PendingIntent.FLAG_IMMUTABLE;
                 }
-            
+
                 PendingIntent contentIntent = PendingIntent.getActivity(appContext, 0, launchIntent, pendingIntentFlags);
                 builder.setContentIntent(contentIntent);
             }

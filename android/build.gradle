@@ -68,6 +68,10 @@ dependencies {
     implementation "androidx.work:work-runtime:${safeExtGet('workVersion', '2.9.0')}"
     implementation 'androidx.localbroadcastmanager:localbroadcastmanager:1.1.0'
 
+    // Google Guava & Concurrent Futures (Resolves: Cannot resolve symbol 'Futures')
+    implementation 'com.google.guava:guava:33.0.0-android'
+    implementation 'androidx.concurrent:concurrent-futures:1.2.0'
+
     // Google Play Services Location
     implementation "com.google.android.gms:play-services-location:${safeExtGet('playServicesLocationVersion', '21.2.0')}"
 
