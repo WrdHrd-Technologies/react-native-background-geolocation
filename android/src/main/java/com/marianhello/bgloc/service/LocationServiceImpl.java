@@ -136,8 +136,6 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
                     if (mProvider instanceof FusedDistanceFilterLocationProvider) {
                         logger.warn("Pipeline shifting tracking engine to high gear.");
                         ((FusedDistanceFilterLocationProvider) mProvider).forceHighGear();
-                    } else if (mProvider != null) {
-                        mProvider.onCommand(LocationProvider.CMD_SWITCH_MODE, LocationProvider.FOREGROUND_MODE);
                     }
                     break;
                 case PipelineMsg.ASYNC_CONFIGURE:
@@ -187,14 +185,12 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             networkCallback = new ConnectivityManager.NetworkCallback() {
                 @Override
                 public void onAvailable(@NonNull Network network) {
-                    logger.info("Network connectivity confirmed active.");
                     if (mPostLocationTask != null) mPostLocationTask.setHasConnectivity(true);
                     scheduleNetworkSync(true);
                 }
 
                 @Override
                 public void onLost(@NonNull Network network) {
-                    logger.info("Network connectivity dropped.");
                     if (mPostLocationTask != null) mPostLocationTask.setHasConnectivity(false);
                 }
 
@@ -209,9 +205,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     connectivityManager.registerDefaultNetworkCallback(networkCallback);
                 }
-            } catch (Exception e) {
-                logger.error("Failed registering network callback observer", e);
-            }
+            } catch (Exception ignored) {}
         }
     }
 
@@ -225,10 +219,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         if (mIsInForeground) return;
 
         Setting setting = getSetting();
-        if (setting != null && !setting.isStarted()) {
-            logger.info("Promotion bypassed: Settings indicate tracking is toggled OFF.");
-            return;
-        }
+        if (setting != null && !setting.isStarted()) return;
 
         try {
             Config config = getConfig();
@@ -241,7 +232,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             }
             mIsInForeground = true;
         } catch (Exception e) {
-            logger.error("Foreground initialization sequence failed", e);
+            logger.error("Foreground initialization failed", e);
         }
     }
 
@@ -249,8 +240,6 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && containsCommand(intent)) {
             promoteToForegroundSynchronously();
-        } else {
-            logger.info("Ghost execution intent detected. Forwarding to pipeline validation.");
         }
 
         Message message = mPipelineHandler.obtainMessage(PipelineMsg.PROCESS_INTENT, intent);
@@ -262,7 +251,6 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
     private void handleIntentOnPipeline(@Nullable Intent intent) {
         Setting setting = getSetting();
         if (setting == null || !setting.isStarted()) {
-            logger.warn("Pipeline: Tracking disabled in SQLite DAO. Terminating ghost execution context.");
             new Handler(Looper.getMainLooper()).post(() -> {
                 if (mWatchdogRunnable != null) {
                     mWatchdogHandler.removeCallbacks(mWatchdogRunnable);
@@ -280,10 +268,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         }
 
         LocationServiceIntentBuilder.Command cmd = getCommand(intent);
-        int commandId = cmd.getId();
-        logger.debug("Processing intent on pipeline. Running: [{}]. cmdId: [{}]", sIsRunning ? "STARTED" : "STOPPED", commandId);
-
-        processCommand(commandId, cmd.getArgument());
+        processCommand(cmd.getId(), cmd.getArgument());
 
         if (containsMessage(intent)) {
             processMessage(getMessage(intent));
@@ -303,9 +288,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
                 case CommandId.START_HEADLESS_TASK: startHeadlessTask(); break;
                 case CommandId.STOP_HEADLESS_TASK: stopHeadlessTask(); break;
             }
-        } catch (Exception e) {
-            logger.error("processCommand runtime failure: ", e);
-        }
+        } catch (Exception ignored) {}
     }
 
     @Override
@@ -320,10 +303,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             setting.setUpdatedAt(System.currentTimeMillis());
             settingDAO.persistSetting(setting);
             mSetting = setting;
-            logger.info("Persisted isStarted = true to SQLite.");
-        } catch (Exception e) {
-            logger.error("Failed to persist started state to SQLite", e);
-        }
+        } catch (Exception ignored) {}
 
         if (mConfig == null) mConfig = getConfig();
 
@@ -341,11 +321,8 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         try {
             mProvider.onStart();
             sIsRunning = true;
-            logger.info("Location provider started cleanly on background pipeline.");
             resetWatchdogTimer();
-        } catch (Exception e) {
-            logger.error("Failed to start location provider", e);
-        }
+        } catch (Exception ignored) {}
 
         Bundle bundle = new Bundle();
         bundle.putInt("action", MSG_ON_SERVICE_STARTED);
@@ -362,7 +339,6 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
     private void handleConfigureOnPipeline(@NonNull Config config) {
         if (config != null) mConfig = config;
         if (mPostLocationTask != null) mPostLocationTask.setConfig(mConfig);
-
         if (mSetting == null) mSetting = getSetting();
 
         if (mProvider != null) {
@@ -378,9 +354,13 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         }
     }
 
+    public void forceHighGear() {
+        mPipelineHandler.obtainMessage(PipelineMsg.FORCE_HIGH_GEAR).sendToTarget();
+    }
+
     @Override
     public void onLocation(BackgroundLocation location) {
-        acquireTransientWakeLock(5000);
+        acquireTransientWakeLock(2000);
         resetWatchdogTimer();
 
         location = transformLocation(location);
@@ -392,7 +372,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         broadcastMessage(bundle);
 
         runHeadlessTask(new LocationTask(location) {
-            @Override public void onError(String err) { logger.error("Headless location error: {}", err); }
+            @Override public void onError(String err) {}
             @Override public void onResult(String res) {}
         });
 
@@ -401,8 +381,11 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
 
     @Override
     public void onStationary(BackgroundLocation location) {
-        acquireTransientWakeLock(5000);
-        resetWatchdogTimer();
+        // Zero WakeLock held when stationary.
+        // Disable watchdog while stationary to prevent cyclic GPS restarts.
+        if (mWatchdogRunnable != null) {
+            mWatchdogHandler.removeCallbacks(mWatchdogRunnable);
+        }
 
         location = transformLocation(location);
         if (location == null) return;
@@ -412,13 +395,9 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         bundle.putParcelable("payload", location);
         broadcastMessage(bundle);
 
-        runHeadlessTask(new StationaryTask(location) {
-            @Override public void onError(String err) { logger.error("Headless stationary error: {}", err); }
-            @Override public void onResult(String res) {}
-        });
-
         postLocation(location);
-        scheduleNetworkSync(true);
+        // Do NOT force immediate upload; batch it.
+        scheduleNetworkSync(false);
     }
 
     @Override
@@ -429,7 +408,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         broadcastMessage(bundle);
 
         runHeadlessTask(new ActivityTask(activity) {
-            @Override public void onError(String err) { logger.error("Headless activity error: {}", err); }
+            @Override public void onError(String err) {}
             @Override public void onResult(String res) {}
         });
     }
@@ -441,25 +420,11 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         bundle.putBundle("payload", error.toBundle());
         broadcastMessage(bundle);
         mPostLocationTask.add(error);
-
-        if (error.getCode() == PluginException.PERMISSION_DENIED_ERROR) {
-            NotificationHelper.registerAllChannels(this);
-            NotificationHelper.NotificationFactory factory = new NotificationHelper.NotificationFactory(this);
-            Notification notification = factory.getPermissionDeniedNotification(
-                    "Permission Denied",
-                    "Location access is denied. Asset tracking requires explicit background authorization."
-            );
-
-            NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-            if (manager != null) {
-                manager.notify(PERMISSION_NOTIFICATION_ID, notification);
-            }
-        }
     }
 
     private void scheduleNetworkSync(boolean forceImmediate) {
         long now = SystemClock.elapsedRealtime();
-        if (!forceImmediate && (now - lastNetworkSyncTime < 15_000L)) return;
+        if (!forceImmediate && (now - lastNetworkSyncTime < 30_000L)) return;
         if (forceImmediate && (now - lastNetworkSyncTime < 5_000L)) return;
         lastNetworkSyncTime = now;
 
@@ -488,8 +453,6 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
 
     @Override
     public void onDestroy() {
-        logger.info("Destroying LocationServiceImpl cleanup stack.");
-
         if (mWatchdogRunnable != null) {
             mWatchdogHandler.removeCallbacks(mWatchdogRunnable);
             mWatchdogRunnable = null;
@@ -516,8 +479,6 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
     public synchronized void stop() {
         if (!sIsRunning) return;
 
-        logger.info("Stopping LocationServiceImpl...");
-
         if (mWatchdogRunnable != null) {
             mWatchdogHandler.removeCallbacks(mWatchdogRunnable);
             mWatchdogRunnable = null;
@@ -532,10 +493,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             setting.setUpdatedAt(System.currentTimeMillis());
             settingDAO.persistSetting(setting);
             mSetting = setting;
-            logger.info("Persisted isStarted = false to SQLite.");
-        } catch (Exception e) {
-            logger.error("Failed persisting stopped state to SQLite", e);
-        }
+        } catch (Exception ignored) {}
 
         try {
             WorkManager.getInstance(getApplicationContext()).cancelUniqueWork("LocationSyncJob");
@@ -667,12 +625,20 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             mWatchdogHandler.removeCallbacks(mWatchdogRunnable);
         }
 
-        Config currentConfig = getConfig();
-        long heartbeat = (currentConfig.getHeartbeatInterval() != null && currentConfig.getHeartbeatInterval() > 0)
-                ? (currentConfig.getHeartbeatInterval() < 1000 ? currentConfig.getHeartbeatInterval() * 1000L : currentConfig.getHeartbeatInterval())
-                : 600000L;
+        // Completely skip watchdog if stationary
+        if (mProvider instanceof FusedDistanceFilterLocationProvider) {
+            if (!((FusedDistanceFilterLocationProvider) mProvider).isMoving()) {
+                return;
+            }
+        }
 
-        long watchdogTimeout = Math.max(heartbeat * 2, 300000L);
+        Config currentConfig = getConfig();
+        Integer rawHeartbeat = currentConfig.getHeartbeatInterval();
+        long heartbeatIntervalMs = (rawHeartbeat != null && rawHeartbeat > 0)
+            ? (rawHeartbeat < 1000 ? rawHeartbeat.longValue() * 1000L : rawHeartbeat.longValue())
+            : 600_000L; 
+
+        long watchdogTimeout = Math.max(heartbeatIntervalMs * 2L, 300_000L);
 
         mWatchdogRunnable = () -> mPipelineHandler.obtainMessage(PipelineMsg.RECYCLE_PROVIDER).sendToTarget();
         mWatchdogHandler.postDelayed(mWatchdogRunnable, watchdogTimeout);
@@ -691,7 +657,6 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             mProvider.onCreate();
             mProvider.onConfigure(getConfig());
             mProvider.onStart();
-            logger.info("Watchdog: Hard reset complete. Provider binders cleanly recovered.");
         } catch (Exception e) {
             logger.error("Failed to recycle hardware provider", e);
         }
@@ -701,7 +666,6 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         try {
             if (wakeLock != null) {
                 wakeLock.acquire(timeoutMs);
-                logger.debug("Transient WakeLock held for {} ms.", timeoutMs);
             }
         } catch (Exception ignored) {}
     }

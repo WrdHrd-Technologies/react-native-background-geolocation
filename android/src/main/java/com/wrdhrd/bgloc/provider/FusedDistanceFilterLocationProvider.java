@@ -25,7 +25,6 @@ import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.Geofence;
 import com.google.android.gms.location.GeofencingClient;
 import com.google.android.gms.location.GeofencingRequest;
-import com.google.android.gms.location.Granularity;
 import com.google.android.gms.location.LocationCallback;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationResult;
@@ -48,8 +47,7 @@ import java.util.List;
 
 public final class FusedDistanceFilterLocationProvider extends AbstractLocationProvider {
 
-    private static final Logger logger =
-            LoggerManager.getLogger(FusedDistanceFilterLocationProvider.class);
+    private static final Logger logger = LoggerManager.getLogger(FusedDistanceFilterLocationProvider.class);
 
     private static volatile WeakReference<FusedDistanceFilterLocationProvider> sActiveInstance =
             new WeakReference<>(null);
@@ -57,54 +55,36 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
     public static final String ACTION_HYBRID_GEOFENCE = "com.wrdhrd.bgloc.ACTION_HYBRID_GEOFENCE";
     public static final String ACTION_HYBRID_ACTIVITY = "com.wrdhrd.bgloc.ACTION_HYBRID_ACTIVITY";
 
-    // Defaults
     private static final long DEFAULT_INTERVAL = 10_000L;
     private static final long DEFAULT_FASTEST_INTERVAL = 5_000L;
     private static final float DEFAULT_DISTANCE_FILTER = 20.0f;
     private static final float DEFAULT_STATIONARY_RADIUS = 100.0f;
-    private static final long DEFAULT_HEARTBEAT_INTERVAL = 10 * 60_000L;
 
-    // Accuracy limits
     private static final float GOOD_ACCURACY_METERS = 50.0f;
     private static final float MAX_TRACKING_ACCURACY_METERS = 1_000.0f;
     private static final float STATIONARY_MAX_ACCURACY_METERS = 25.0f;
 
-    // Speeds
     private static final float WALKING_SPEED_KMH = 15.0f;
-    private static final float HIGH_SPEED_KMH = 60.0f;
     private static final float STATIONARY_SPEED_MPS = 0.5f;
     private static final float MAX_PHYSICAL_TRANSIT_SPEED_KMH = 350.0f;
     private static final float SUSPICIOUS_SPEED_KMH = 160.0f;
 
-    // Multipliers
-    private static final float WALKING_DISTANCE_MULTIPLIER = 1.0f;
-    private static final float DRIVING_DISTANCE_MULTIPLIER = 2.0f;
-    private static final float HIGH_SPEED_DISTANCE_MULTIPLIER = 3.0f;
-    private static final float MAX_DYNAMIC_DISTANCE_FILTER = 100.0f;
-
-    // Sentry / Reconfiguration
     private static final int STATIONARY_CONFIRMATION_COUNT = 6;
-    private static final float MIN_SENTRY_GEOFENCE_RADIUS = 100.0f;
     public static final long SENTRY_START_DEBOUNCE_MS = 15_000L;
-    private static final long REQUEST_RECONFIGURE_COOLDOWN_MS = 30_000L;
 
-    // Kinetic states
     public static final String STATE_STILL = "STILL";
     public static final String STATE_WALKING = "WALKING";
     public static final String STATE_DRIVING = "DRIVING";
     private static final String EXTRA_KINETIC_STATE = "com.wrdhrd.bgloc.KINETIC_STATE";
 
-    // Play Services
     private final FusedLocationProviderClient mFusedLocationClient;
     private final GeofencingClient mGeofencingClient;
     private LocationCallback mFusedLocationCallback;
 
-    // Threading
     private final Object mLock = new Object();
     private HandlerThread mWorkerThread;
     private Handler mWorkerHandler;
 
-    // State Tracking
     private volatile boolean isStarted = false;
     private boolean isMoving = false;
     private String currentKineticState = STATE_STILL;
@@ -116,51 +96,6 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
     private float stationaryRadius;
     private long sentryEngagedTime = 0L;
     private long lifecycleGeneration = 0L;
-
-    // Throttling Cache
-    private long mLastRequestedInterval = -1L;
-    private long mLastRequestedFastestInterval = -1L;
-    private float mLastRequestedDistanceFilter = -1.0f;
-    private int mLastRequestedPriority = -1;
-    private long mLastHardwareRequestChangeTime = 0L;
-
-    private long mPendingInterval = -1L;
-    private long mPendingFastestInterval = -1L;
-    private float mPendingDistanceFilter = -1.0f;
-    private int mPendingPriority = -1;
-
-    private final Runnable mReconfigureRunnable = new Runnable() {
-        @Override
-        public void run() {
-            synchronized (mLock) {
-                if (mWorkerHandler == null || !isStarted || !isMoving) {
-                    return;
-                }
-
-                if (mPendingInterval <= 0 || mPendingFastestInterval <= 0
-                        || mPendingDistanceFilter <= 0 || mPendingPriority < 0) {
-                    return;
-                }
-
-                long now = System.currentTimeMillis();
-                long elapsed = now - mLastHardwareRequestChangeTime;
-
-                if (mLastHardwareRequestChangeTime > 0 && elapsed < REQUEST_RECONFIGURE_COOLDOWN_MS) {
-                    long remaining = REQUEST_RECONFIGURE_COOLDOWN_MS - elapsed;
-                    mWorkerHandler.removeCallbacks(this);
-                    mWorkerHandler.postDelayed(this, Math.max(remaining, 1000L));
-                    return;
-                }
-
-                reconfigureHardwareRequest(
-                        mPendingInterval,
-                        mPendingFastestInterval,
-                        mPendingDistanceFilter,
-                        mPendingPriority
-                );
-            }
-        }
-    };
 
     public FusedDistanceFilterLocationProvider(@NonNull Context context) {
         super(context, Config.FUSED_DISTANCE_FILTER_PROVIDER);
@@ -196,7 +131,6 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
         }
     }
 
-
     private void setReceiversEnabled(boolean enabled) {
         try {
             PackageManager pm = mContext.getPackageManager();
@@ -207,19 +141,8 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
             ComponentName geofenceComponent = new ComponentName(mContext, HybridGeofenceReceiver.class);
             ComponentName activityComponent = new ComponentName(mContext, HybridActivityReceiver.class);
 
-            pm.setComponentEnabledSetting(
-                    geofenceComponent,
-                    newState,
-                    PackageManager.DONT_KILL_APP
-            );
-
-            pm.setComponentEnabledSetting(
-                    activityComponent,
-                    newState,
-                    PackageManager.DONT_KILL_APP
-            );
-
-            logger.info("Hybrid broadcast receivers dynamically toggled to: {}", enabled ? "ENABLED" : "DISABLED");
+            pm.setComponentEnabledSetting(geofenceComponent, newState, PackageManager.DONT_KILL_APP);
+            pm.setComponentEnabledSetting(activityComponent, newState, PackageManager.DONT_KILL_APP);
         } catch (Exception e) {
             logger.error("Failed toggling hybrid receivers state", e);
         }
@@ -228,7 +151,6 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
     @Override
     public void onCreate() {
         super.onCreate();
-
         synchronized (mLock) {
             mWorkerThread = new HandlerThread("FusedDistanceWorker", Process.THREAD_PRIORITY_BACKGROUND);
             mWorkerThread.start();
@@ -245,7 +167,6 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
         sActiveInstance = new WeakReference<>(this);
     }
 
-
     private void processIncomingLocations(List<Location> locations) {
         if (!isStarted || locations == null || locations.isEmpty()) return;
         for (Location location : locations) {
@@ -257,10 +178,7 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
         if (!isStarted || location == null) return;
 
         float accuracy = location.hasAccuracy() ? location.getAccuracy() : Float.MAX_VALUE;
-        if (accuracy > MAX_TRACKING_ACCURACY_METERS) {
-            logger.debug("Discarding unusable location fix: accuracy={}m", accuracy);
-            return;
-        }
+        if (accuracy > MAX_TRACKING_ACCURACY_METERS) return;
 
         float reportedSpeed = location.hasSpeed() ? Math.max(location.getSpeed(), 0.0f) : 0.0f;
         float distanceFromLastGood = 0.0f;
@@ -271,25 +189,16 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
             elapsedMillis = getElapsedMillis(lastGoodLocation, location);
         }
 
-        float calculatedSpeed = 0.0f;
-        if (elapsedMillis > 0 && distanceFromLastGood >= 0.0f) {
-            calculatedSpeed = distanceFromLastGood / (elapsedMillis / 1000.0f);
-        }
+        float calculatedSpeed = (elapsedMillis > 0 && distanceFromLastGood >= 0.0f)
+                ? distanceFromLastGood / (elapsedMillis / 1000.0f)
+                : 0.0f;
 
         float speedMps = reportedSpeed > 0.0f ? reportedSpeed : calculatedSpeed;
 
         if (lastGoodLocation != null && elapsedMillis > 0) {
             float instantaneousSpeedKmh = calculatedSpeed * 3.6f;
-
-            if (instantaneousSpeedKmh > MAX_PHYSICAL_TRANSIT_SPEED_KMH) {
-                logger.warn("Discarded physical jump: speed={}km/h dist={}m", instantaneousSpeedKmh, distanceFromLastGood);
-                return;
-            }
-
-            if (instantaneousSpeedKmh > SUSPICIOUS_SPEED_KMH && accuracy > GOOD_ACCURACY_METERS) {
-                logger.warn("Discarded suspicious GPS hop: speed={}km/h acc={}m", instantaneousSpeedKmh, accuracy);
-                return;
-            }
+            if (instantaneousSpeedKmh > MAX_PHYSICAL_TRANSIT_SPEED_KMH) return;
+            if (instantaneousSpeedKmh > SUSPICIOUS_SPEED_KMH && accuracy > GOOD_ACCURACY_METERS) return;
         }
 
         updateKineticState(speedMps);
@@ -299,33 +208,23 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
             boolean highVelocity = speedMps >= (WALKING_SPEED_KMH / 3.6f);
 
             if (displaced || highVelocity) {
-                logger.info("Kinetic breakout detected: dist={}m speed={}km/h", distanceFromLastGood, speedMps * 3.6f);
+                logger.info("Kinetic breakout detected. Engaging GPS.");
                 setPace(true);
             } else {
-                if (lastGoodLocation != null) {
-                    emitHeartbeat();
-                }
                 return;
             }
         }
 
+        // Stationary detection
         if (accuracy <= STATIONARY_MAX_ACCURACY_METERS && speedMps <= STATIONARY_SPEED_MPS) {
             stationaryCount++;
             if (stationaryCount >= STATIONARY_CONFIRMATION_COUNT) {
-                logger.info("Stationary threshold reached. Transitioning to sentry.");
+                logger.info("Stationary confirmed. Entering zero-power Sentry mode.");
                 executeSentryTransition(location);
                 return;
             }
         } else {
             stationaryCount = 0;
-        }
-
-        if (isMoving) {
-            applyConfiguredActiveRequest(speedMps);
-        }
-
-        if (shouldDiscardBySoftwareDistanceFilter(location)) {
-            return;
         }
 
         Location output = new Location(location);
@@ -337,25 +236,11 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
         lastGoodLocation = new Location(location);
         lastLocation = new Location(output);
 
-        if (mConfig.isDebugging()) {
+        if (mConfig != null && mConfig.isDebugging()) {
             playDebugTone(ToneGenerator.Tone.BEEP);
         }
 
         handleLocation(output);
-    }
-
-    private boolean shouldDiscardBySoftwareDistanceFilter(Location location) {
-        if (lastLocation == null) return false;
-
-        float distance = location.distanceTo(lastLocation);
-        float speedMps = location.hasSpeed() ? Math.max(location.getSpeed(), 0.0f) : 0.0f;
-        float dynamicDistance = calculateElasticDistanceFilter(speedMps);
-
-        if (distance < dynamicDistance) {
-            logger.debug("Suppressed by elastic filter: dist={}m dynamicMin={}m", distance, dynamicDistance);
-            return true;
-        }
-        return false;
     }
 
     private void executeSentryTransition(Location location) {
@@ -375,7 +260,7 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
 
         handleStationary(stationaryPoint, stationaryRadius);
 
-        if (mConfig.isDebugging()) {
+        if (mConfig != null && mConfig.isDebugging()) {
             playDebugTone(ToneGenerator.Tone.LONG_BEEP);
         }
 
@@ -383,22 +268,12 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
         setPace(false);
     }
 
-
     @SuppressLint("MissingPermission")
     public void setPace(boolean moving) {
         if (!isStarted) return;
+        if (!hasRequiredPermissions()) return;
 
-        if (!hasRequiredPermissions()) {
-            handleSecurityException(new SecurityException("Cannot set pace: ACCESS_FINE_LOCATION missing"));
-            return;
-        }
-
-        if (isMoving == moving) {
-            if (moving && mLastRequestedInterval < 0) {
-                applyConfiguredActiveRequest(0.0f);
-            }
-            return;
-        }
+        if (isMoving == moving) return;
 
         isMoving = moving;
         stationaryCount = 0;
@@ -406,164 +281,66 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
         try {
             mFusedLocationClient.removeLocationUpdates(mFusedLocationCallback);
             teardownSentryTripwires();
-            resetRequestCache();
 
             if (moving) {
-                logger.info("Kinetic tracking ACTIVE.");
+                logger.info("Kinetic tracking ACTIVE. Requesting Fused Updates.");
                 currentKineticState = currentKineticState.equals(STATE_STILL) ? STATE_WALKING : currentKineticState;
-                applyConfiguredActiveRequest(0.0f);
-            } else {
-                logger.info("Sentry mode ENGAGED.");
-                currentKineticState = STATE_STILL;
-
-                long heartbeatInterval = getHeartbeatInterval();
-                LocationRequest sentryRequest = new LocationRequest.Builder(
-                        Priority.PRIORITY_BALANCED_POWER_ACCURACY,
-                        heartbeatInterval
-                )
-                        .setMinUpdateIntervalMillis(Math.max(heartbeatInterval / 2L, 60_000L))
+                
+                LocationRequest request = new LocationRequest.Builder(resolveLocationPriority(), getConfiguredInterval())
+                        .setMinUpdateIntervalMillis(getConfiguredFastestInterval())
                         .setMinUpdateDistanceMeters(getConfiguredDistanceFilter())
-                        .setGranularity(Granularity.GRANULARITY_PERMISSION_LEVEL)
                         .setWaitForAccurateLocation(false)
                         .build();
 
                 synchronized (mLock) {
                     if (mWorkerHandler != null) {
                         mFusedLocationClient.requestLocationUpdates(
-                                sentryRequest,
+                                request,
                                 mFusedLocationCallback,
                                 mWorkerHandler.getLooper()
                         );
                     }
                 }
+            } else {
+                logger.info("Sentry mode ENGAGED. Total GPS shutdown; passive tripwires armed.");
+                currentKineticState = STATE_STILL;
+                // ZERO location polling here. Let CPU sleep.
                 deployHybridTripwires();
             }
         } catch (SecurityException e) {
             handleSecurityException(e);
-        } catch (Exception e) {
-            logger.error("Failed to alter pace state", e);
         }
     }
 
-    @SuppressLint("MissingPermission")
-    private void applyConfiguredActiveRequest(float speedMps) {
-        if (!isStarted || !isMoving) return;
-
-        if (!hasRequiredPermissions()) {
-            handleSecurityException(new SecurityException("ACCESS_FINE_LOCATION revoked during tracking"));
-            return;
-        }
-
-        long interval = getConfiguredInterval();
-        long fastestInterval = getConfiguredFastestInterval();
-        float distanceFilter = calculateElasticDistanceFilter(speedMps);
-        int priority = resolveLocationPriority();
-
-        if (interval == mLastRequestedInterval
-                && fastestInterval == mLastRequestedFastestInterval
-                && Math.abs(distanceFilter - mLastRequestedDistanceFilter) < 0.5f
-                && priority == mLastRequestedPriority) {
-            return;
-        }
-
-        mPendingInterval = interval;
-        mPendingFastestInterval = fastestInterval;
-        mPendingDistanceFilter = distanceFilter;
-        mPendingPriority = priority;
-
-        long now = System.currentTimeMillis();
-        long elapsed = now - mLastHardwareRequestChangeTime;
-
-        if (mLastHardwareRequestChangeTime > 0 && elapsed < REQUEST_RECONFIGURE_COOLDOWN_MS) {
-            long remaining = REQUEST_RECONFIGURE_COOLDOWN_MS - elapsed;
-            synchronized (mLock) {
-                if (mWorkerHandler != null) {
-                    mWorkerHandler.removeCallbacks(mReconfigureRunnable);
-                    mWorkerHandler.postDelayed(mReconfigureRunnable, Math.max(remaining, 1000L));
-                }
+    public void forceHighGear() {
+        synchronized (mLock) {
+            if (mWorkerHandler != null) {
+                mWorkerHandler.post(() -> {
+                    if (isStarted && !isMoving) {
+                        setPace(true);
+                    }
+                });
             }
-            return;
-        }
-
-        reconfigureHardwareRequest(interval, fastestInterval, distanceFilter, priority);
-    }
-
-    @SuppressLint("MissingPermission")
-    private void reconfigureHardwareRequest(long interval, long fastestInterval, float distanceFilter, int priority) {
-        if (!isStarted || !isMoving) return;
-
-        if (!hasRequiredPermissions()) {
-            handleSecurityException(new SecurityException("ACCESS_FINE_LOCATION revoked before request configuration"));
-            return;
-        }
-
-        LocationRequest request = new LocationRequest.Builder(priority, interval)
-                .setMinUpdateIntervalMillis(fastestInterval)
-                .setMinUpdateDistanceMeters(distanceFilter)
-                .setWaitForAccurateLocation(false)
-                .build();
-
-        try {
-            mFusedLocationClient.removeLocationUpdates(mFusedLocationCallback);
-            synchronized (mLock) {
-                if (mWorkerHandler != null) {
-                    mFusedLocationClient.requestLocationUpdates(
-                            request,
-                            mFusedLocationCallback,
-                            mWorkerHandler.getLooper()
-                    );
-                }
-            }
-
-            mLastRequestedInterval = interval;
-            mLastRequestedFastestInterval = fastestInterval;
-            mLastRequestedDistanceFilter = distanceFilter;
-            mLastRequestedPriority = priority;
-            mLastHardwareRequestChangeTime = System.currentTimeMillis();
-
-            logger.info("Active request reconfiguration applied: interval={}ms dist={}m", interval, distanceFilter);
-        } catch (SecurityException e) {
-            handleSecurityException(e);
-        } catch (Exception e) {
-            logger.error("Failed to reconfigure location request", e);
         }
     }
-
 
     @SuppressLint("MissingPermission")
     private void deployHybridTripwires() {
         if (!isStarted || isMoving) return;
+        if (!hasRequiredPermissions()) return;
 
-        if (!hasRequiredPermissions()) {
-            handleSecurityException(new SecurityException("Cannot deploy tripwires: ACCESS_FINE_LOCATION missing"));
-            return;
-        }
-
-        Location origin = (stationaryAnchorLocation != null)
-                ? stationaryAnchorLocation
-                : lastGoodLocation;
-
+        Location origin = (stationaryAnchorLocation != null) ? stationaryAnchorLocation : lastGoodLocation;
         if (origin == null) {
             final long gen = lifecycleGeneration;
-            mFusedLocationClient.getLastLocation()
-                    .addOnSuccessListener(loc -> {
-                        synchronized (mLock) {
-                            if (mWorkerHandler == null || !isStarted || isMoving || gen != lifecycleGeneration || loc == null) {
-                                return;
-                            }
-                            mWorkerHandler.post(() -> {
-                                stationaryAnchorLocation = new Location(loc);
-                                deployHybridTripwires();
-                            });
-                        }
-                    })
-                    .addOnFailureListener(error -> {
-                        if (error instanceof SecurityException) {
-                            handleSecurityException((SecurityException) error);
-                        } else {
-                            logger.warn("Unable to obtain last known location: {}", error.getMessage());
-                        }
+            mFusedLocationClient.getLastLocation().addOnSuccessListener(loc -> {
+                synchronized (mLock) {
+                    if (mWorkerHandler == null || !isStarted || isMoving || gen != lifecycleGeneration || loc == null) return;
+                    mWorkerHandler.post(() -> {
+                        stationaryAnchorLocation = new Location(loc);
+                        deployHybridTripwires();
                     });
+                }
+            });
             return;
         }
 
@@ -580,23 +357,11 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
             ActivityTransitionRequest request = new ActivityTransitionRequest(transitions);
             try {
                 ActivityRecognition.getClient(mContext)
-                        .requestActivityTransitionUpdates(request, getActivityPendingIntent())
-                        .addOnFailureListener(e -> {
-                            if (e instanceof SecurityException) {
-                                handleSecurityException((SecurityException) e);
-                            } else {
-                                logger.warn("Activity transitions registration failed: {}", e.getMessage());
-                            }
-                        });
-            } catch (SecurityException e) {
-                handleSecurityException(e);
-            }
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            logger.warn("ACTIVITY_RECOGNITION missing on Android 10+");
+                        .requestActivityTransitionUpdates(request, getActivityPendingIntent());
+            } catch (Exception ignored) {}
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !hasBackgroundLocationPermission()) {
-            logger.warn("ACCESS_BACKGROUND_LOCATION missing. Geofencing disabled.");
             return;
         }
 
@@ -614,32 +379,19 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
                 .build();
 
         try {
-            mGeofencingClient.addGeofences(request, getGeofencePendingIntent())
-                    .addOnFailureListener(e -> {
-                        if (e instanceof SecurityException) {
-                            handleSecurityException((SecurityException) e);
-                        } else {
-                            logger.warn("Geofence registration failed: {}", e.getMessage());
-                        }
-                    });
-        } catch (SecurityException e) {
-            handleSecurityException(e);
-        }
+            mGeofencingClient.addGeofences(request, getGeofencePendingIntent());
+        } catch (Exception ignored) {}
     }
 
     @SuppressLint("MissingPermission")
     private void teardownSentryTripwires() {
         try {
             if (hasActivityPermission()) {
-                ActivityRecognition.getClient(mContext)
-                        .removeActivityTransitionUpdates(getActivityPendingIntent());
+                ActivityRecognition.getClient(mContext).removeActivityTransitionUpdates(getActivityPendingIntent());
             }
             mGeofencingClient.removeGeofences(getGeofencePendingIntent());
-        } catch (Exception e) {
-            logger.debug("Tripwire cleanup completed: {}", e.getMessage());
-        }
+        } catch (Exception ignored) {}
     }
-
 
     private int getPendingIntentFlags(boolean mutable) {
         int flags = PendingIntent.FLAG_UPDATE_CURRENT;
@@ -674,27 +426,6 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
         }
     }
 
-    private float calculateElasticDistanceFilter(float speedMps) {
-        float baseFilter = getConfiguredDistanceFilter();
-        float speedKmh = speedMps * 3.6f;
-
-        if (speedKmh <= WALKING_SPEED_KMH) {
-            return Math.min(baseFilter * WALKING_DISTANCE_MULTIPLIER, MAX_DYNAMIC_DISTANCE_FILTER);
-        }
-        if (speedKmh <= HIGH_SPEED_KMH) {
-            return Math.min(baseFilter * DRIVING_DISTANCE_MULTIPLIER, MAX_DYNAMIC_DISTANCE_FILTER);
-        }
-        return Math.min(baseFilter * HIGH_SPEED_DISTANCE_MULTIPLIER, MAX_DYNAMIC_DISTANCE_FILTER);
-    }
-
-    private void emitHeartbeat() {
-        if (lastGoodLocation == null) return;
-        Location heartbeat = new Location(lastGoodLocation);
-        heartbeat.setTime(System.currentTimeMillis());
-        heartbeat.setProvider("heartbeat_ping");
-        handleStationary(heartbeat, getStationaryRadius());
-    }
-
     private long getElapsedMillis(Location previous, Location current) {
         if (previous == null || current == null) return 0L;
         long previousNanos = previous.getElapsedRealtimeNanos();
@@ -702,16 +433,15 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
         if (previousNanos > 0 && currentNanos > previousNanos) {
             return (currentNanos - previousNanos) / 1_000_000L;
         }
-        long diff = current.getTime() - previous.getTime();
-        return Math.max(diff, 0L);
+        return Math.max(current.getTime() - previous.getTime(), 0L);
     }
 
     private int resolveLocationPriority() {
+        if (mConfig == null) return Priority.PRIORITY_BALANCED_POWER_ACCURACY;
         Integer desiredAccuracy = mConfig.getDesiredAccuracy();
-        if (desiredAccuracy != null && desiredAccuracy <= 10) {
-            return Priority.PRIORITY_HIGH_ACCURACY;
-        }
-        return Priority.PRIORITY_BALANCED_POWER_ACCURACY;
+        return (desiredAccuracy != null && desiredAccuracy <= 10)
+                ? Priority.PRIORITY_HIGH_ACCURACY
+                : Priority.PRIORITY_BALANCED_POWER_ACCURACY;
     }
 
     private long getConfiguredInterval() {
@@ -723,29 +453,19 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
     private long getConfiguredFastestInterval() {
         if (mConfig == null) return DEFAULT_FASTEST_INTERVAL;
         Integer val = mConfig.getFastestInterval();
-        if (val != null && val > 0) {
-            return val.longValue();
-        }
-        return Math.max(getConfiguredInterval() / 2L, 1000L);
+        return (val != null && val > 0) ? val.longValue() : Math.max(getConfiguredInterval() / 2L, 1000L);
     }
 
     private float getConfiguredDistanceFilter() {
+        if (mConfig == null) return DEFAULT_DISTANCE_FILTER;
         Integer val = mConfig.getDistanceFilter();
         return (val != null && val > 0) ? val.floatValue() : DEFAULT_DISTANCE_FILTER;
     }
 
     private float getStationaryRadius() {
+        if (mConfig == null) return DEFAULT_STATIONARY_RADIUS;
         Float val = mConfig.getStationaryRadius();
-        return Math.max((val != null && val > 0) ? val : DEFAULT_STATIONARY_RADIUS, MIN_SENTRY_GEOFENCE_RADIUS);
-    }
-
-    private long getHeartbeatInterval() {
-        if (mConfig == null) return DEFAULT_HEARTBEAT_INTERVAL;
-        Integer val = mConfig.getHeartbeatInterval();
-        if (val != null && val > 0) {
-            return val < 1000 ? (val.longValue() * 1000L) : val.longValue();
-        }
-        return DEFAULT_HEARTBEAT_INTERVAL;
+        return (val != null && val > 0) ? val : DEFAULT_STATIONARY_RADIUS;
     }
 
     private boolean hasRequiredPermissions() {
@@ -760,43 +480,17 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || ContextCompat.checkSelfPermission(mContext, Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED;
     }
 
-    private void resetRequestCache() {
-        mLastRequestedInterval = -1L;
-        mLastRequestedFastestInterval = -1L;
-        mLastRequestedDistanceFilter = -1.0f;
-        mLastRequestedPriority = -1;
-        mLastHardwareRequestChangeTime = 0L;
-        mPendingInterval = -1L;
-        mPendingFastestInterval = -1L;
-        mPendingDistanceFilter = -1.0f;
-        mPendingPriority = -1;
-
-        synchronized (mLock) {
-            if (mWorkerHandler != null) {
-                mWorkerHandler.removeCallbacks(mReconfigureRunnable);
-            }
-        }
-    }
-
-
     @Override
     public void onStart() {
         if (isStarted) return;
-
-        if (!hasRequiredPermissions()) {
-            logger.error("Missing ACCESS_FINE_LOCATION permission on provider start.");
-            handleSecurityException(new SecurityException("Missing ACCESS_FINE_LOCATION permission on provider start"));
-            return;
-        }
+        if (!hasRequiredPermissions()) return;
 
         super.onStart();
         isStarted = true;
         lifecycleGeneration++;
         stationaryCount = 0;
 
-        // Dynamically enable receivers at the OS package level
         setReceiversEnabled(true);
-
         synchronized (mLock) {
             if (mWorkerHandler != null) {
                 mWorkerHandler.post(() -> {
@@ -813,7 +507,6 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
         lifecycleGeneration++;
 
         setReceiversEnabled(false);
-
         super.onStop();
 
         synchronized (mLock) {
@@ -822,14 +515,11 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
                     try {
                         mFusedLocationClient.removeLocationUpdates(mFusedLocationCallback);
                         teardownSentryTripwires();
-                        resetRequestCache();
                         isMoving = false;
                         lastGoodLocation = null;
                         lastLocation = null;
                         stationaryAnchorLocation = null;
-                    } catch (Exception e) {
-                        logger.warn("Teardown error during onStop: {}", e.getMessage());
-                    }
+                    } catch (Exception ignored) {}
                 });
             }
         }
@@ -839,17 +529,11 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
     public void onResume() {
         super.onResume();
         if (!isStarted) return;
-
         synchronized (mLock) {
             if (mWorkerHandler != null) {
                 mWorkerHandler.post(() -> {
                     if (!isStarted) return;
-                    if (!isMoving) {
-                        setPace(true);
-                    } else {
-                        resetRequestCache();
-                        applyConfiguredActiveRequest(0.0f);
-                    }
+                    if (!isMoving) setPace(true);
                 });
             }
         }
@@ -859,17 +543,11 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
     public void onConfigure(Config config) {
         super.onConfigure(config);
         if (!isStarted) return;
-
         synchronized (mLock) {
             if (mWorkerHandler != null) {
                 mWorkerHandler.post(() -> {
                     if (!isStarted) return;
-                    resetRequestCache();
-                    if (isMoving) {
-                        applyConfiguredActiveRequest(0.0f);
-                    } else {
-                        setPace(false);
-                    }
+                    setPace(isMoving);
                 });
             }
         }
@@ -879,7 +557,6 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
     public void onDestroy() {
         isStarted = false;
         lifecycleGeneration++;
-
         setReceiversEnabled(false);
 
         try {
@@ -905,18 +582,5 @@ public final class FusedDistanceFilterLocationProvider extends AbstractLocationP
     @Override
     public boolean isStarted() {
         return isStarted;
-    }
-
-    public void forceHighGear() {
-        synchronized (mLock) {
-            if (mWorkerHandler != null) {
-                mWorkerHandler.post(() -> {
-                    if (isStarted && !isMoving) {
-                        logger.warn("High Gear explicitly forced. Engaging kinetic tracking.");
-                        setPace(true);
-                    }
-                });
-            }
-        }
     }
 }
