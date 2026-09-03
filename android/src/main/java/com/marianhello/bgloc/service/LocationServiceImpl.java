@@ -19,8 +19,8 @@ import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
-import android.os.Process;
 import android.os.PowerManager;
+import android.os.Process;
 import android.os.SystemClock;
 
 import androidx.annotation.NonNull;
@@ -36,18 +36,16 @@ import androidx.work.WorkManager;
 
 import com.marianhello.bgloc.Config;
 import com.marianhello.bgloc.ConnectivityListener;
-import com.marianhello.bgloc.Setting;
-import com.marianhello.bgloc.data.SettingDAO;
-import com.marianhello.bgloc.sync.LocationSyncWorker;
-import com.marianhello.bgloc.sync.NotificationHelper;
 import com.marianhello.bgloc.PluginException;
 import com.marianhello.bgloc.PostLocationTask;
 import com.marianhello.bgloc.ResourceResolver;
+import com.marianhello.bgloc.Setting;
 import com.marianhello.bgloc.data.BackgroundActivity;
 import com.marianhello.bgloc.data.BackgroundLocation;
 import com.marianhello.bgloc.data.DAOFactory;
 import com.marianhello.bgloc.data.LocationDAO;
 import com.marianhello.bgloc.data.LocationTransform;
+import com.marianhello.bgloc.data.SettingDAO;
 import com.marianhello.bgloc.headless.AbstractTaskRunner;
 import com.marianhello.bgloc.headless.ActivityTask;
 import com.marianhello.bgloc.headless.LocationTask;
@@ -58,6 +56,8 @@ import com.marianhello.bgloc.headless.TaskRunnerFactory;
 import com.marianhello.bgloc.provider.LocationProvider;
 import com.marianhello.bgloc.provider.LocationProviderFactory;
 import com.marianhello.bgloc.provider.ProviderDelegate;
+import com.marianhello.bgloc.sync.LocationSyncWorker;
+import com.marianhello.bgloc.sync.NotificationHelper;
 import com.marianhello.logging.LoggerManager;
 import com.marianhello.logging.UncaughtExceptionLogger;
 import com.wrdhrd.bgloc.provider.FusedDistanceFilterLocationProvider;
@@ -113,6 +113,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
 
     private static int sActiveBindCount = 0;
     private static long lastNetworkSyncTime = 0;
+    private long lastStationarySyncTime = 0L;
 
     private static class PipelineMsg {
         static final int PROCESS_INTENT = 1001;
@@ -287,6 +288,7 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
                 case CommandId.REGISTER_HEADLESS_TASK: registerHeadlessTask((String) arg); break;
                 case CommandId.START_HEADLESS_TASK: startHeadlessTask(); break;
                 case CommandId.STOP_HEADLESS_TASK: stopHeadlessTask(); break;
+                case CommandId.SYNC: sync(); break;
             }
         } catch (Exception ignored) {}
     }
@@ -358,6 +360,25 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         mPipelineHandler.obtainMessage(PipelineMsg.FORCE_HIGH_GEAR).sendToTarget();
     }
 
+    private int calculateDynamicSyncThreshold(float speedMps) {
+        Config config = getConfig();
+        int baseThreshold = (config.getSyncThreshold() != null && config.getSyncThreshold() > 0)
+                ? config.getSyncThreshold()
+                : 20;
+
+        float speedKmh = speedMps * 3.6f;
+
+        if (speedKmh > 60.0f) {
+            return Math.max(1, Math.round(baseThreshold * 1.5f));
+        } else if (speedKmh > 15.0f) {
+            return baseThreshold;
+        } else if (speedKmh > 2.0f) {
+            return Math.max(1, Math.round(baseThreshold * 0.4f));
+        } else {
+            return 1;
+        }
+    }
+
     @Override
     public void onLocation(BackgroundLocation location) {
         acquireTransientWakeLock(2000);
@@ -377,12 +398,14 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         });
 
         postLocation(location);
+
+        float speedMps = location.getSpeed();
+        int targetThreshold = calculateDynamicSyncThreshold(speedMps);
+        scheduleNetworkSync(false, targetThreshold);
     }
 
     @Override
     public void onStationary(BackgroundLocation location) {
-        // Zero WakeLock held when stationary.
-        // Disable watchdog while stationary to prevent cyclic GPS restarts.
         if (mWatchdogRunnable != null) {
             mWatchdogHandler.removeCallbacks(mWatchdogRunnable);
         }
@@ -390,14 +413,37 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         location = transformLocation(location);
         if (location == null) return;
 
+        boolean isHeartbeatPulse = "heartbeat_ping".equals(location.getProvider());
+
+        if (!isHeartbeatPulse) {
+            acquireTransientWakeLock(1500L);
+        }
+
         Bundle bundle = new Bundle();
         bundle.putInt("action", MSG_ON_STATIONARY);
         bundle.putParcelable("payload", location);
         broadcastMessage(bundle);
 
+        if (!isHeartbeatPulse) {
+            runHeadlessTask(new StationaryTask(location) {
+                @Override public void onError(String err) {}
+                @Override public void onResult(String res) {}
+            });
+        }
+
         postLocation(location);
-        // Do NOT force immediate upload; batch it.
-        scheduleNetworkSync(false);
+
+        long configuredHeartbeatMs = 15 * 60 * 1000L;
+        if (mConfig != null && mConfig.getHeartbeatInterval() != null && mConfig.getHeartbeatInterval() > 0) {
+            int rawVal = mConfig.getHeartbeatInterval();
+            configuredHeartbeatMs = rawVal < 1000 ? rawVal * 1000L : rawVal;
+        }
+
+        long now = SystemClock.elapsedRealtime();
+        if (!isHeartbeatPulse || (now - lastStationarySyncTime >= configuredHeartbeatMs)) {
+            lastStationarySyncTime = now;
+            scheduleNetworkSync(true, 0);
+        }
     }
 
     @Override
@@ -422,17 +468,25 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         mPostLocationTask.add(error);
     }
 
-    private void scheduleNetworkSync(boolean forceImmediate) {
+    @Override
+    public void sync() {
+        logger.info("Manual sync triggered via LocationServiceImpl.");
+        scheduleNetworkSync(true, 0);
+    }
+
+    private void scheduleNetworkSync(boolean forceImmediate, int dynamicThreshold) {
         long now = SystemClock.elapsedRealtime();
-        if (!forceImmediate && (now - lastNetworkSyncTime < 30_000L)) return;
+        if (!forceImmediate && (now - lastNetworkSyncTime < 20_000L)) return;
         if (forceImmediate && (now - lastNetworkSyncTime < 5_000L)) return;
         lastNetworkSyncTime = now;
 
         Constraints constraints = new Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build();
+
         Data inputData = new Data.Builder()
                 .putBoolean("force_sync", forceImmediate)
+                .putInt("dynamic_sync_threshold", dynamicThreshold)
                 .build();
 
         OneTimeWorkRequest syncRequest = new OneTimeWorkRequest.Builder(LocationSyncWorker.class)
@@ -440,15 +494,15 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
                 .setInputData(inputData)
                 .build();
 
-        Config config = getConfig();
-        ExistingWorkPolicy optimalPolicy = (config.getUrl() != null && !config.getUrl().isEmpty())
-                ? ExistingWorkPolicy.REPLACE : ExistingWorkPolicy.KEEP;
-
         WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
                 "LocationSyncJob",
-                optimalPolicy,
+                ExistingWorkPolicy.KEEP,
                 syncRequest
         );
+    }
+
+    private void scheduleNetworkSync(boolean forceImmediate) {
+        scheduleNetworkSync(forceImmediate, -1);
     }
 
     @Override
@@ -625,7 +679,6 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
             mWatchdogHandler.removeCallbacks(mWatchdogRunnable);
         }
 
-        // Completely skip watchdog if stationary
         if (mProvider instanceof FusedDistanceFilterLocationProvider) {
             if (!((FusedDistanceFilterLocationProvider) mProvider).isMoving()) {
                 return;
@@ -635,8 +688,8 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
         Config currentConfig = getConfig();
         Integer rawHeartbeat = currentConfig.getHeartbeatInterval();
         long heartbeatIntervalMs = (rawHeartbeat != null && rawHeartbeat > 0)
-            ? (rawHeartbeat < 1000 ? rawHeartbeat.longValue() * 1000L : rawHeartbeat.longValue())
-            : 600_000L; 
+                ? (rawHeartbeat < 1000 ? rawHeartbeat.longValue() * 1000L : rawHeartbeat.longValue())
+                : 600_000L;
 
         long watchdogTimeout = Math.max(heartbeatIntervalMs * 2L, 300_000L);
 
@@ -664,10 +717,12 @@ public class LocationServiceImpl extends Service implements ProviderDelegate, Lo
 
     private void acquireTransientWakeLock(long timeoutMs) {
         try {
-            if (wakeLock != null) {
+            if (wakeLock != null && !wakeLock.isHeld()) {
                 wakeLock.acquire(timeoutMs);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            logger.warn("Failed acquiring transient wakelock: {}", e.getMessage());
+        }
     }
 
     private void safelyReleaseWakeLock() {

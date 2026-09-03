@@ -16,7 +16,6 @@ public class LocationServiceProxy implements LocationService, LocationServiceInf
         mContext = context.getApplicationContext();
     }
 
-   
     private LocationServiceIntentBuilder getFreshBuilder() {
         return LocationServiceIntentBuilder.getInstance(mContext);
     }
@@ -27,6 +26,16 @@ public class LocationServiceProxy implements LocationService, LocationServiceInf
 
         Intent intent = getFreshBuilder()
                 .setCommand(CommandId.CONFIGURE, config)
+                .build();
+        executeIntentCommand(intent);
+    }
+
+    @Override
+    public void sync() {
+        if (!isStarted()) { return; }
+
+        Intent intent = getFreshBuilder()
+                .setCommand(CommandId.SYNC)
                 .build();
         executeIntentCommand(intent);
     }
@@ -89,7 +98,7 @@ public class LocationServiceProxy implements LocationService, LocationServiceInf
                 mContext.startService(intent);
             }
         } catch (Exception e) {
-             Log.e(TAG, "Fatal restriction: OS rejected immediate foreground initialization sequence.", e);
+            Log.e(TAG, "Fatal restriction: OS rejected immediate foreground initialization sequence.", e);
         }
     }
 
@@ -116,7 +125,7 @@ public class LocationServiceProxy implements LocationService, LocationServiceInf
     @Override
     public void setting(Setting setting) {
         Intent intent = getFreshBuilder()
-                .setCommand(CommandId.CONFIGURE) 
+                .setCommand(CommandId.CONFIGURE)
                 .build();
         executeIntentCommand(intent);
     }
@@ -151,7 +160,7 @@ public class LocationServiceProxy implements LocationService, LocationServiceInf
         try {
             mContext.startService(intent);
         } catch (IllegalStateException e) {
-            Log.w(TAG, "Command dispatch dropped. App is backgrounded and cannot start services. Command ID: " 
+            Log.w(TAG, "Command dispatch dropped. App is backgrounded and cannot start services. Command ID: "
                     + LocationServiceIntentBuilder.getCommand(intent).getId(), e);
         } catch (Exception ex) {
             Log.e(TAG, "Unexpected crash error during command pipeline dispatch matrix execution.", ex);

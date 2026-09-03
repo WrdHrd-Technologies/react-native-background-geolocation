@@ -7,7 +7,6 @@ import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.content.pm.ServiceInfo;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -36,22 +35,31 @@ import com.marianhello.bgloc.data.SettingDAO;
 import com.marianhello.bgloc.service.LocationServiceImpl;
 import com.marianhello.bgloc.service.LocationServiceIntentBuilder;
 import com.marianhello.logging.LoggerManager;
+import com.marianhello.utils.RealTimeHelper;
 
 import org.slf4j.Logger;
 
+import java.io.BufferedInputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.zip.GZIPOutputStream;
 
 public final class LocationSyncWorker extends Worker implements HttpPostService.UploadingProgressListener {
 
     private static final String TAG = "LocationSyncWorker";
     private static final int NOTIFICATION_ID = 666;
+    private static final int MAX_LOCATIONS_PER_CHUNK = 50;
 
-    private static final String INPUT_RESURRECT_SERVICE = "resurrect_service";
-    private static final String INPUT_RESURRECT_ON_BOOT = "resurrect_on_boot";
-    private static final String INPUT_FORCE_SYNC = "force_sync";
+    public static final String INPUT_RESURRECT_SERVICE = "resurrect_service";
+    public static final String INPUT_RESURRECT_ON_BOOT = "resurrect_on_boot";
+    public static final String INPUT_FORCE_SYNC = "force_sync";
+    public static final String INPUT_DYNAMIC_SYNC_THRESHOLD = "dynamic_sync_threshold";
 
     private final Logger logger;
     private final BatchManager batchManager;
@@ -84,11 +92,6 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
                 "Sync in progress"
         );
 
-        /*
-         * Note: The manifest declares FOREGROUND_SERVICE_LOCATION for location services.
-         * For standard WorkManager background sync workers, passing standard ForegroundInfo
-         * avoids ForegroundServiceType mismatch crashes on Android 14+ (API 34+).
-         */
         ForegroundInfo foregroundInfo = new ForegroundInfo(NOTIFICATION_ID, notification);
         return Futures.immediateFuture(foregroundInfo);
     }
@@ -117,7 +120,6 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
             return Result.success();
         }
 
-        // Service resurrection checks
         boolean shouldResurrectOnUpgrade = getInputData().getBoolean(INPUT_RESURRECT_SERVICE, false);
         boolean shouldResurrectOnBoot = getInputData().getBoolean(INPUT_RESURRECT_ON_BOOT, false);
 
@@ -135,74 +137,96 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
             return Result.failure();
         }
 
-        if (config == null) {
-            logger.warn("Location configuration is unavailable.");
-            return Result.failure();
-        }
-
-        if (!config.hasValidSyncUrl()) {
-            logger.warn("Target API endpoint URL is blank. Halting worker.");
+        if (config == null || !config.hasValidSyncUrl()) {
+            logger.warn("Target API endpoint URL is blank or config unavailable. Halting worker.");
             return Result.failure();
         }
 
         if (!isNetworkAvailable()) {
-            logger.warn("Worker initiated without validated internet connection. Scheduling retry.");
+            logger.warn("Worker initiated without internet connection. Scheduling retry.");
             return Result.retry();
         }
 
-        final long batchStartMillis = System.currentTimeMillis();
         final boolean isForced = getInputData().getBoolean(INPUT_FORCE_SYNC, false);
+        final int passedDynamicThreshold = getInputData().getInt(INPUT_DYNAMIC_SYNC_THRESHOLD, -1);
 
         this.notificationsEnabled = isForced
                 && (!config.hasNotificationsEnabled() || config.getNotificationsEnabled());
 
-        final int syncThreshold = (isForced || getRunAttemptCount() > 0) ? 0 : config.getSyncThreshold();
-
-        File file = null;
-
-        try {
-            if (isStopped()) {
-                return Result.retry();
-            }
-
-            file = batchManager.createBatch(batchStartMillis, syncThreshold, config.getTemplate());
-
-            if (file == null) {
-                logger.info("Sync condition aborted: no locations available or sync threshold not reached.");
-                return Result.success();
-            }
-
-            if (isStopped()) {
-                cleanUpBatchFile(file);
-                return Result.retry();
-            }
-
-            Map<String, String> headers = buildHeaders(config, batchStartMillis);
-            boolean success = uploadLocations(file, config.getSyncUrl(), headers);
-
-            if (isStopped()) {
-                cleanUpBatchFile(file);
-                return Result.retry();
-            }
-
-            if (success) {
-                logger.info("Location synchronizer batch transaction finalized cleanly.");
-                batchManager.setBatchCompleted(batchStartMillis);
-                return Result.success();
-            } else {
-                logger.warn("Network transmission failed. Scheduling retry.");
-                return Result.retry();
-            }
-
-        } catch (IOException e) {
-            logger.error("IO error while preparing/uploading offline batch", e);
-            return Result.retry();
-        } catch (Exception e) {
-            logger.error("Unexpected error in LocationSyncWorker", e);
-            return Result.retry();
-        } finally {
-            cleanUpBatchFile(file);
+        int initialThreshold;
+        if (isForced || getRunAttemptCount() > 0) {
+            initialThreshold = 0;
+        } else if (passedDynamicThreshold >= 0) {
+            initialThreshold = passedDynamicThreshold;
+        } else {
+            initialThreshold = (config.getSyncThreshold() != null && config.getSyncThreshold() > 0)
+                    ? config.getSyncThreshold()
+                    : 0;
         }
+
+        int chunkCount = 0;
+
+        // Drain pending queue chunk by chunk
+        while (!isStopped()) {
+            final long chunkBatchId = System.currentTimeMillis();
+            int effectiveThreshold = (chunkCount == 0) ? initialThreshold : 0;
+            File chunkFile = null;
+
+            try {
+                chunkFile = batchManager.createBatch(
+                        chunkBatchId,
+                        effectiveThreshold,
+                        MAX_LOCATIONS_PER_CHUNK,
+                        config.getTemplate()
+                );
+
+                if (chunkFile == null) {
+                    break;
+                }
+
+                if (isStopped()) {
+                    batchManager.unassignBatch(chunkBatchId);
+                    cleanUpBatchFile(chunkFile);
+                    return Result.retry();
+                }
+
+                Map<String, String> headers = buildHeaders(config, chunkBatchId);
+                boolean success = uploadLocations(chunkFile, config.getSyncUrl(), headers);
+
+                if (isStopped()) {
+                    batchManager.unassignBatch(chunkBatchId);
+                    cleanUpBatchFile(chunkFile);
+                    return Result.retry();
+                }
+
+                if (success) {
+                    batchManager.setBatchCompleted(chunkBatchId);
+                    chunkCount++;
+                    logger.info("Chunk {} uploaded and purged successfully.", chunkCount);
+                } else {
+                    batchManager.unassignBatch(chunkBatchId);
+                    logger.warn("Chunk upload failed. Scheduling retry.");
+                    return Result.retry();
+                }
+
+            } catch (IOException e) {
+                logger.error("IO error while preparing/uploading offline batch", e);
+                batchManager.unassignBatch(chunkBatchId);
+                return Result.retry();
+            } catch (Exception e) {
+                logger.error("Unexpected error in LocationSyncWorker", e);
+                batchManager.unassignBatch(chunkBatchId);
+                return Result.retry();
+            } finally {
+                cleanUpBatchFile(chunkFile);
+            }
+
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException ignored) {}
+        }
+
+        return Result.success();
     }
 
     private void handleServiceResurrection(@NonNull Context context, boolean isBoot) {
@@ -230,7 +254,7 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
                     ContextCompat.startForegroundService(context, serviceIntent);
                 } catch (Exception e) {
                     if (e instanceof ForegroundServiceStartNotAllowedException) {
-                        logger.warn("Foreground service start restricted by OS. Deferring resurrection until app transition.");
+                        logger.warn("Foreground service start deferred by OS on API 31+.");
                     } else {
                         throw e;
                     }
@@ -255,9 +279,7 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
 
         if (config.getHttpHeaders() != null) {
             for (Map.Entry<?, ?> entry : config.getHttpHeaders().entrySet()) {
-                if (entry.getKey() == null) {
-                    continue;
-                }
+                if (entry.getKey() == null) continue;
                 String key = String.valueOf(entry.getKey());
                 String value = entry.getValue() != null ? String.valueOf(entry.getValue()) : "";
                 headers.put(key, value);
@@ -268,7 +290,7 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
         return headers;
     }
 
-    private boolean uploadLocations(@NonNull File file, @NonNull String url, @NonNull Map<String, String> httpHeaders) {
+    private boolean uploadLocations(@NonNull File file, @NonNull String urlString, @NonNull Map<String, String> httpHeaders) {
         if (isStopped()) {
             return false;
         }
@@ -285,10 +307,59 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
 
         boolean isStatusOkay = false;
         String completionText = "Sync failed due to server error";
+        HttpURLConnection connection = null;
 
         try {
-            HashMap<String, String> legacyMapWrapper = new HashMap<>(httpHeaders);
-            int responseCode = HttpPostService.postJSONFile(url, file, legacyMapWrapper, this);
+            URL targetUrl = new URL(urlString);
+            connection = (HttpURLConnection) targetUrl.openConnection();
+            connection.setRequestMethod("POST");
+            connection.setDoOutput(true);
+            connection.setConnectTimeout(15_000);
+            connection.setReadTimeout(15_000);
+            connection.setUseCaches(false);
+
+            // Gzip Request & Accept Encoding
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setRequestProperty("Content-Encoding", "gzip");
+            connection.setRequestProperty("Accept-Encoding", "gzip");
+
+            for (Map.Entry<String, String> entry : httpHeaders.entrySet()) {
+                connection.setRequestProperty(entry.getKey(), entry.getValue());
+            }
+
+            long totalBytes = file.length();
+            long bytesReadTotal = 0;
+
+            try (FileInputStream fileIn = new FileInputStream(file);
+                 BufferedInputStream bufferedIn = new BufferedInputStream(fileIn);
+                 OutputStream out = connection.getOutputStream();
+                 GZIPOutputStream gzipOut = new GZIPOutputStream(out)) {
+
+                byte[] buffer = new byte[4096];
+                int bytesRead;
+
+                while ((bytesRead = bufferedIn.read(buffer)) != -1) {
+                    if (isStopped()) return false;
+                    gzipOut.write(buffer, 0, bytesRead);
+                    bytesReadTotal += bytesRead;
+
+                    if (totalBytes > 0) {
+                        int progress = (int) ((bytesReadTotal * 100) / totalBytes);
+                        onProgress(progress);
+                    }
+                }
+                gzipOut.finish();
+            }
+
+            int responseCode = connection.getResponseCode();
+
+            String serverDateHeader = connection.getHeaderField("Date");
+            if (serverDateHeader != null) {
+                long serverTime = connection.getHeaderFieldDate("Date", 0);
+                if (serverTime > 0) {
+                    RealTimeHelper.calibrateTime(serverTime, "ServerDateHeader");
+                }
+            }
 
             if (isStopped()) {
                 return false;
@@ -310,6 +381,10 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
             logger.warn("Location batch upload failed", e);
             return false;
         } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+
             if (notificationsEnabled) {
                 final String finalText = completionText;
                 mainThreadHandler.post(() -> {
@@ -325,8 +400,7 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
                         mainThreadHandler.postDelayed(() -> {
                             try {
                                 notificationManager.cancel(NOTIFICATION_ID);
-                            } catch (Exception ignored) {
-                            }
+                            } catch (Exception ignored) {}
                         }, 5000L);
 
                     } catch (Exception e) {
@@ -348,9 +422,7 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
 
             mainThreadHandler.post(() -> {
                 try {
-                    if (isStopped()) {
-                        return;
-                    }
+                    if (isStopped()) return;
 
                     Notification progressNotification = notificationFactory.getSyncProgressNotification(
                             "Syncing locations",
@@ -366,10 +438,7 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
     }
 
     private void cleanUpBatchFile(@Nullable File file) {
-        if (file == null || !file.exists()) {
-            return;
-        }
-
+        if (file == null || !file.exists()) return;
         try {
             if (!file.delete()) {
                 logger.debug("Batch file could not be deleted immediately: {}", file.getAbsolutePath());
@@ -385,19 +454,24 @@ public final class LocationSyncWorker extends Worker implements HttpPostService.
         try {
             mainThreadHandler.removeCallbacksAndMessages(null);
             notificationManager.cancel(NOTIFICATION_ID);
-        } catch (Exception ignored) {
-        }
+        } catch (Exception ignored) {}
     }
 
     private boolean isNetworkAvailable() {
         ConnectivityManager cm = (ConnectivityManager) getApplicationContext().getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm == null) return false;
-        Network network = cm.getActiveNetwork();
-        if (network == null) return false;
-        NetworkCapabilities capabilities = cm.getNetworkCapabilities(network);
-        return capabilities != null
-                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Network network = cm.getActiveNetwork();
+            if (network == null) return false;
+            NetworkCapabilities capabilities = cm.getNetworkCapabilities(network);
+            return capabilities != null
+                    && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+        } else {
+            android.net.NetworkInfo activeNetworkInfo = cm.getActiveNetworkInfo();
+            return activeNetworkInfo != null && activeNetworkInfo.isConnected();
+        }
     }
 
     private boolean hasNotificationPermission() {

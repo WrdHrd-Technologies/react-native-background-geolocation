@@ -15,7 +15,7 @@ import androidx.annotation.IntDef;
         CommandId.REGISTER_HEADLESS_TASK,
         CommandId.START_HEADLESS_TASK,
         CommandId.STOP_HEADLESS_TASK,
-        CommandId.HEARTBEAT_PING
+        CommandId.SYNC
 })
 @Retention(RetentionPolicy.SOURCE)
 public @interface CommandId {
@@ -29,5 +29,5 @@ public @interface CommandId {
     int REGISTER_HEADLESS_TASK = 6;
     int START_HEADLESS_TASK = 7;
     int STOP_HEADLESS_TASK = 8;
-    int HEARTBEAT_PING = 9;
+    int SYNC = 9;
 }

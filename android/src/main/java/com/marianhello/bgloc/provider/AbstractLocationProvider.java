@@ -11,6 +11,9 @@ import android.provider.Settings;
 import android.util.Log;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 import com.google.android.gms.location.DetectedActivity;
 import com.marianhello.bgloc.Config;
 import com.marianhello.bgloc.PluginException;
@@ -19,9 +22,9 @@ import com.marianhello.bgloc.data.BackgroundLocation;
 import com.marianhello.bgloc.data.BatteryInfo;
 import com.marianhello.bgloc.data.BatteryUtils;
 import com.marianhello.logging.LoggerManager;
+import com.marianhello.utils.RealTimeHelper;
 import com.marianhello.utils.ToneGenerator;
 import com.marianhello.utils.ToneGenerator.Tone;
-
 
 public abstract class AbstractLocationProvider implements LocationProvider {
     private static final String TAG = "AbstractLocProvider";
@@ -36,7 +39,7 @@ public abstract class AbstractLocationProvider implements LocationProvider {
     private ProviderDelegate mDelegate;
     private Location lastLocation;
 
-    protected AbstractLocationProvider(Context context, Integer provider_id) {
+    protected AbstractLocationProvider(@NonNull Context context, Integer provider_id) {
         mContext = context.getApplicationContext();
         logger = LoggerManager.getLogger(getClass());
         this.PROVIDER_ID = provider_id;
@@ -89,26 +92,37 @@ public abstract class AbstractLocationProvider implements LocationProvider {
         }
     }
 
+    /**
+     * Unified mapper constructing a complete BackgroundLocation entity with 
+     * tamper-proof monotonic time, cached battery status, and mock flags.
+     */
+    @NonNull
+    protected BackgroundLocation buildBackgroundLocation(@NonNull Location location) {
+        BackgroundLocation bgLocation = BackgroundLocation.fromLocation(location);
+        bgLocation.setLocationProvider(PROVIDER_ID);
+
+        bgLocation.setRealTime(RealTimeHelper.nowMillis());
+
+        BatteryInfo batteryInfo = BatteryUtils.getBatteryStatus(mContext);
+        bgLocation.setBatteryLevel(batteryInfo.getBatteryLevel());
+        bgLocation.setIsCharging(batteryInfo.getIsCharging());
+
+        bgLocation.setMockLocationsEnabled(hasMockLocationsEnabled(location));
+
+        return bgLocation;
+    }
+
     protected void handleLocation(Location location) {
         if (location == null) return;
         playDebugTone(Tone.BEEP);
         
         if (mDelegate != null) {
-           
             if (lastLocation != null && lastLocation.getTime() == location.getTime()) {
                 return;
             }
             lastLocation = location;
 
-            BatteryInfo batteryInfo = BatteryUtils.getBatteryStatus(mContext);
-            BackgroundLocation bgLocation = BackgroundLocation.fromLocation(location);
-            
-            bgLocation.setLocationProvider(PROVIDER_ID);
-            bgLocation.setBatteryLevel(batteryInfo.getBatteryLevel());
-            bgLocation.setIsCharging(batteryInfo.getIsCharging());
-            
-            bgLocation.setMockLocationsEnabled(hasMockLocationsEnabled(location));
-            
+            BackgroundLocation bgLocation = buildBackgroundLocation(location);
             mDelegate.onLocation(bgLocation);
         }
     }
@@ -118,34 +132,14 @@ public abstract class AbstractLocationProvider implements LocationProvider {
         playDebugTone(Tone.LONG_BEEP);
         
         if (mDelegate != null) {
-            BatteryInfo batteryInfo = BatteryUtils.getBatteryStatus(mContext);
-            BackgroundLocation bgLocation = BackgroundLocation.fromLocation(location);
-            
-            bgLocation.setLocationProvider(PROVIDER_ID);
-            bgLocation.setBatteryLevel(batteryInfo.getBatteryLevel());
-            bgLocation.setIsCharging(batteryInfo.getIsCharging());
-            bgLocation.setMockLocationsEnabled(hasMockLocationsEnabled(location));
+            BackgroundLocation bgLocation = buildBackgroundLocation(location);
             bgLocation.setRadius(radius);
-            
             mDelegate.onStationary(bgLocation);
         }
     }
 
     protected void handleStationary(Location location) {
-        if (location == null) return;
-        playDebugTone(Tone.LONG_BEEP);
-        
-        if (mDelegate != null) {
-            BatteryInfo batteryInfo = BatteryUtils.getBatteryStatus(mContext);
-            BackgroundLocation bgLocation = BackgroundLocation.fromLocation(location);
-            
-            bgLocation.setLocationProvider(PROVIDER_ID);
-            bgLocation.setBatteryLevel(batteryInfo.getBatteryLevel());
-            bgLocation.setIsCharging(batteryInfo.getIsCharging());
-            bgLocation.setMockLocationsEnabled(hasMockLocationsEnabled(location));
-            
-            mDelegate.onStationary(bgLocation);
-        }
+        handleStationary(location, 0.0f);
     }
 
     protected void handleActivity(DetectedActivity activity) {
@@ -167,12 +161,12 @@ public abstract class AbstractLocationProvider implements LocationProvider {
         }
     }
 
-    public Boolean hasMockLocationsEnabled(Location location) {
+    public Boolean hasMockLocationsEnabled(@Nullable Location location) {
         if (location == null) {
             return false;
         }
 
-        // Android 12 (API 31) and above
+        // Android 12 (API 31) through Android 16+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) { 
             return location.isMock();
         }

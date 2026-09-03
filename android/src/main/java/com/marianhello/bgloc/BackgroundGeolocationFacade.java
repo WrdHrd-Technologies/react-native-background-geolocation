@@ -1,6 +1,5 @@
 package com.marianhello.bgloc;
 
-
 import android.Manifest;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -13,6 +12,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.provider.Settings.SettingNotFoundException;
+import android.text.TextUtils;
+
 import androidx.core.content.ContextCompat;
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 import androidx.work.Constraints;
@@ -23,30 +24,32 @@ import androidx.work.OneTimeWorkRequest;
 import androidx.work.OutOfQuotaPolicy;
 import androidx.work.WorkManager;
 
-import android.text.TextUtils;
-
 import com.github.jparkie.promise.Promise;
 import com.intentfilter.androidpermissions.PermissionManager;
 import com.marianhello.bgloc.data.BackgroundActivity;
 import com.marianhello.bgloc.data.BackgroundLocation;
 import com.marianhello.bgloc.data.DAOFactory;
+import com.marianhello.bgloc.data.LocationTransform;
 import com.marianhello.bgloc.provider.LocationProvider;
 import com.marianhello.bgloc.service.LocationService;
 import com.marianhello.bgloc.service.LocationServiceImpl;
 import com.marianhello.bgloc.service.LocationServiceProxy;
-import com.marianhello.bgloc.data.LocationTransform;
 import com.marianhello.bgloc.sync.LocationSyncWorker;
 import com.marianhello.bgloc.sync.NotificationHelper;
+import com.marianhello.bgloc.sync.WorkManagerHelper;
 import com.marianhello.logging.DBLogReader;
 import com.marianhello.logging.LogEntry;
 import com.marianhello.logging.LoggerManager;
 import com.marianhello.logging.UncaughtExceptionLogger;
+import com.marianhello.utils.RealTimeHelper;
 
 import org.json.JSONException;
 import org.slf4j.event.Level;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
 import java.util.concurrent.TimeoutException;
 
 public class BackgroundGeolocationFacade {
@@ -56,29 +59,33 @@ public class BackgroundGeolocationFacade {
     public static final int AUTHORIZATION_AUTHORIZED = 1;
     public static final int AUTHORIZATION_DENIED = 0;
 
-    // Permissions requested initially while the app is in foreground
-    public static final String[] INITIALPERMISSIONS = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ? new String[]{
-            Manifest.permission.ACTIVITY_RECOGNITION,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.ACCESS_FINE_LOCATION
-    } : new String[]{
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.ACCESS_FINE_LOCATION
-    };
+    private static String[] buildInitialPermissions() {
+        List<String> perms = new ArrayList<>();
+        perms.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+        perms.add(Manifest.permission.ACCESS_FINE_LOCATION);
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            perms.add(Manifest.permission.ACTIVITY_RECOGNITION);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            perms.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
+        return perms.toArray(new String[0]);
+    }
+
+    private static String[] buildAllPermissions() {
+        List<String> perms = new ArrayList<>(Arrays.asList(buildInitialPermissions()));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            perms.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION);
+        }
+        return perms.toArray(new String[0]);
+    }
+
+    public static final String[] INITIALPERMISSIONS = buildInitialPermissions();
     public static final String[] BACKGROUNDLOCATIONPERMISSION = new String[]{
             Manifest.permission.ACCESS_BACKGROUND_LOCATION
     };
-
-    public static final String[] PERMISSIONS = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ? new String[]{
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_BACKGROUND_LOCATION,
-            Manifest.permission.ACTIVITY_RECOGNITION
-    } : new String[]{
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-    };
+    public static final String[] PERMISSIONS = buildAllPermissions();
 
     private boolean mServiceBroadcastReceiverRegistered = false;
     private boolean mLocationModeChangeReceiverRegistered = false;
@@ -90,19 +97,21 @@ public class BackgroundGeolocationFacade {
     private final PluginDelegate mDelegate;
     private final LocationService mService;
     private BackgroundLocation mStationaryLocation;
-    private org.slf4j.Logger logger;
+    private final org.slf4j.Logger logger;
 
     public BackgroundGeolocationFacade(Context context, PluginDelegate delegate) {
         mContext = context;
         mDelegate = delegate;
         mService = new LocationServiceProxy(context);
 
-        UncaughtExceptionLogger.register(context.getApplicationContext());
+        Context appContext = context.getApplicationContext();
+        UncaughtExceptionLogger.register(appContext);
         logger = LoggerManager.getLogger(BackgroundGeolocationFacade.class);
         LoggerManager.enableDBLogging();
 
         logger.info("Initializing plugin facade layer.");
-        NotificationHelper.registerAllChannels(getApplicationContext());
+        NotificationHelper.registerAllChannels(appContext);
+        RealTimeHelper.initialize(appContext);
     }
 
     private final BroadcastReceiver locationModeChangeReceiver = new BroadcastReceiver() {
@@ -177,7 +186,7 @@ public class BackgroundGeolocationFacade {
 
         IntentFilter filter = new IntentFilter(android.location.LocationManager.MODE_CHANGED_ACTION);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            getApplicationContext().registerReceiver(locationModeChangeReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            getApplicationContext().registerReceiver(locationModeChangeReceiver, filter, Context.RECEIVER_EXPORTED);
         } else {
             getApplicationContext().registerReceiver(locationModeChangeReceiver, filter);
         }
@@ -186,19 +195,26 @@ public class BackgroundGeolocationFacade {
 
     private synchronized void unregisterLocationModeChangeReceiver() {
         if (!mLocationModeChangeReceiverRegistered) return;
-        getApplicationContext().unregisterReceiver(locationModeChangeReceiver);
+        try {
+            getApplicationContext().unregisterReceiver(locationModeChangeReceiver);
+        } catch (Exception ignored) {}
         mLocationModeChangeReceiverRegistered = false;
     }
 
     private synchronized void registerServiceBroadcast() {
         if (mServiceBroadcastReceiverRegistered) return;
-        LocalBroadcastManager.getInstance(getApplicationContext()).registerReceiver(serviceBroadcastReceiver, new IntentFilter(LocationServiceImpl.ACTION_BROADCAST));
+        LocalBroadcastManager.getInstance(getApplicationContext()).registerReceiver(
+                serviceBroadcastReceiver,
+                new IntentFilter(LocationServiceImpl.ACTION_BROADCAST)
+        );
         mServiceBroadcastReceiverRegistered = true;
     }
 
     private synchronized void unregisterServiceBroadcast() {
         if (!mServiceBroadcastReceiverRegistered) return;
-        LocalBroadcastManager.getInstance(getApplicationContext()).unregisterReceiver(serviceBroadcastReceiver);
+        try {
+            LocalBroadcastManager.getInstance(getApplicationContext()).unregisterReceiver(serviceBroadcastReceiver);
+        } catch (Exception ignored) {}
         mServiceBroadcastReceiverRegistered = false;
     }
 
@@ -317,21 +333,21 @@ public class BackgroundGeolocationFacade {
 
             Throwable error = promise.getError();
             if (error == null) {
-                throw new PluginException("Location not available", 2); // LOCATION_UNAVAILABLE
+                throw new PluginException("Location not available", 2);
             }
             if (error instanceof LocationManager.PermissionDeniedException) {
-                logger.warn("Getting current location failed due missing permissions");
-                throw new PluginException("Permission denied", 1); // PERMISSION_DENIED
+                logger.warn("Getting current location failed due to missing permissions");
+                throw new PluginException("Permission denied", 1);
             }
             if (error instanceof TimeoutException) {
-                throw new PluginException("Location request timed out", 3); // TIME_OUT
+                throw new PluginException("Location request timed out", 3);
             }
 
-            throw new PluginException(error.getMessage(), 2); // LOCATION_UNAVAILABLE
+            throw new PluginException(error.getMessage(), 2);
         } catch (InterruptedException e) {
-            logger.error("Interrupted while waiting location", e);
+            logger.error("Interrupted while waiting for location fix", e);
             Thread.currentThread().interrupt();
-            throw new RuntimeException("Interrupted while waiting location", e);
+            throw new RuntimeException("Interrupted while waiting for location fix", e);
         }
     }
 
@@ -411,10 +427,26 @@ public class BackgroundGeolocationFacade {
         return new DBLogReader(getApplicationContext()).getEntries(limit, offset, Level.valueOf(minLevel));
     }
 
+    public void sync() {
+        forceSync();
+    }
+
     public void forceSync() {
-        logger.debug("Sync locations forced via WorkManager configuration parameters.");
-        Constraints constraints = new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build();
-        Data inputData = new Data.Builder().putBoolean("force_sync", true).build();
+        logger.debug("Sync locations requested through unified facade bridge.");
+
+        if (LocationServiceImpl.isRunning()) {
+            mService.sync();
+            return;
+        }
+
+        Constraints constraints = new Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build();
+
+        Data inputData = new Data.Builder()
+                .putBoolean(LocationSyncWorker.INPUT_FORCE_SYNC, true)
+                .putInt(LocationSyncWorker.INPUT_DYNAMIC_SYNC_THRESHOLD, 0)
+                .build();
 
         OneTimeWorkRequest syncRequest = new OneTimeWorkRequest.Builder(LocationSyncWorker.class)
                 .setConstraints(constraints)
@@ -422,11 +454,15 @@ public class BackgroundGeolocationFacade {
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .build();
 
-        WorkManager.getInstance(getApplicationContext()).enqueueUniqueWork(
-                "LocationSyncJob",
-                ExistingWorkPolicy.APPEND_OR_REPLACE,
-                syncRequest
-        );
+        try {
+            WorkManagerHelper.getWorkManager(getApplicationContext()).enqueueUniqueWork(
+                    "LocationSyncJob",
+                    ExistingWorkPolicy.REPLACE,
+                    syncRequest
+            );
+        } catch (Exception e) {
+            logger.error("Failed to enqueue forceSync through WorkManagerHelper.", e);
+        }
     }
 
     public int getAuthorizationStatus() {

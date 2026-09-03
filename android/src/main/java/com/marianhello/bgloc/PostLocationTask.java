@@ -8,7 +8,6 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -27,8 +26,7 @@ public class PostLocationTask {
 
     private org.slf4j.Logger logger;
 
-    public interface PostLocationTaskListener
-    {
+    public interface PostLocationTaskListener {
         void onSyncRequested();
         void onRequestedAbortUpdates();
         void onHttpAuthorizationUpdates();
@@ -55,21 +53,17 @@ public class PostLocationTask {
     }
 
     public void clearQueue() {
-        logger.info("Scheduling non-posted local location queue data clearance.");
         try {
-            mExecutor.execute(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        mLocationDAO.deleteAllLocations();
-                        logger.debug("Local SQLite pending location database records purged successfully.");
-                    } catch (Exception e) {
-                        logger.error("Failed executing unposted locations data cleanup inside background thread.", e);
-                    }
+            mExecutor.execute(() -> {
+                try {
+                    mLocationDAO.deleteAllLocations();
+                    logger.debug("Local SQLite pending location database records purged successfully.");
+                } catch (Exception e) {
+                    logger.error("Failed executing unposted locations data cleanup.", e);
                 }
             });
         } catch (RejectedExecutionException ex) {
-            logger.error("Executor rejected clearQueue command track execution.", ex);
+            logger.error("Executor rejected clearQueue execution.", ex);
         }
     }
 
@@ -80,17 +74,13 @@ public class PostLocationTask {
         }
 
         try {
-            mExecutor.execute(new Runnable() {
-                @Override
-                public void run() {
-                    long locationId = mLocationDAO.persistLocation(location);
-                    location.setLocationId(locationId);
-
-                    post(location);
-                }
+            mExecutor.execute(() -> {
+                long locationId = mLocationDAO.persistLocation(location);
+                location.setLocationId(locationId);
+                post(location);
             });
         } catch (RejectedExecutionException ex) {
-            logger.error("Executor rejected location, cannot persist.", ex);
+            logger.error("Executor rejected location persistence task.", ex);
         }
     }
 
@@ -117,68 +107,65 @@ public class PostLocationTask {
             if (mHasConnectivity && mConfig.hasValidUrl()) {
                 if (postLocation(location)) {
                     mLocationDAO.deleteLocationById(locationId);
-                    return; 
+                    return;
                 }
             }
-            
+
             mLocationDAO.updateLocationForSync(locationId);
-            return; 
+            return;
         }
 
         mLocationDAO.updateLocationForSync(locationId);
-
-        if (mConfig.hasValidSyncUrl()) {
-            long syncLocationsCount = mLocationDAO.getLocationsForSyncCount(System.currentTimeMillis());
-            if (syncLocationsCount >= mConfig.getSyncThreshold()) {
-                logger.debug("Threshold reached for batch tracking config (%d/%d). Invoking WorkManager syncer.", 
-                        syncLocationsCount, mConfig.getSyncThreshold());
-                mTaskListener.onSyncRequested();
-            }
-        }
     }
 
     private boolean postLocation(BackgroundLocation location) {
-        logger.debug("Executing PostLocationTask#postLocation");
         JSONArray jsonLocations = new JSONArray();
 
         try {
             jsonLocations.put(mConfig.getTemplate().locationToJson(location));
         } catch (JSONException e) {
-            logger.warn("Location to json failed: {}", location.toString());
+            logger.warn("Location to JSON transformation failed: {}", location);
             return false;
         }
 
         String url = mConfig.getUrl();
         Map<String, String> safeHeaders = mConfig.getHttpHeaders();
-        logger.debug("Posting json to url: {} headers: {}", url, mConfig.getHttpHeaders());
         int responseCode;
 
         try {
             responseCode = HttpPostService.postJSON(url, jsonLocations, safeHeaders);
         } catch (Exception e) {
             mHasConnectivity = mConnectivityListener.hasConnectivity();
-            logger.warn("Error while posting locations: {}", e.getMessage());
+            logger.warn("Error posting single location: {}", e.getMessage());
             return false;
         }
 
-        if (responseCode == 285) {
-            logger.debug("Location was sent to the server, and received an \"HTTP 285 Updates Not Required\"");
-            if (mTaskListener != null)
-                mTaskListener.onRequestedAbortUpdates();
+        if (responseCode == 285 && mTaskListener != null) {
+            mTaskListener.onRequestedAbortUpdates();
         }
 
-        if (responseCode == 401) {
-            if (mTaskListener != null)
-                mTaskListener.onHttpAuthorizationUpdates();
+        if (responseCode == 401 && mTaskListener != null) {
+            mTaskListener.onHttpAuthorizationUpdates();
         }
 
-        boolean isStatusOkay = responseCode >= 200 && responseCode < 300;
-        if (!isStatusOkay) {
-            logger.warn("Server error while posting locations responseCode: {}", responseCode);
-            return false;
+        return responseCode >= 200 && responseCode < 300;
+    }
+
+    public void add(final PluginException error) {
+        if (mConfig == null) {
+            logger.warn("PostErrorTask has no config. Skipping Error.");
+            return;
         }
 
-        return true;
+        final String errorUrl = mConfig.hasValidUrl() ? mConfig.getUrl() : mConfig.getSyncUrl();
+
+        if (mHasConnectivity && errorUrl != null && !errorUrl.isEmpty()) {
+            try {
+                mExecutor.execute(() -> postError(error, errorUrl));
+            } catch (RejectedExecutionException ex) {
+                logger.error("Error dispatch rejected by executor: {}", ex.getMessage());
+            }
+        }
     }
 
     private void postError(PluginException error, String targetUrl) {
@@ -189,32 +176,10 @@ public class PostLocationTask {
 
             int responseCode = HttpPostService.postJSON(finalUrl, jsonError, safeHeaders);
             if (responseCode >= 200 && responseCode < 300) {
-                logger.debug("Critical Error successfully dispatched to server.");
+                logger.debug("Error successfully dispatched to server.");
             }
         } catch (Exception e) {
-            logger.warn("Offline: Could not dispatch critical error: {}", e.getMessage());
-        }
-    }
-
-    public void add(final PluginException error) {
-        if (mConfig == null) {
-            logger.warn("PostErrorTask has no config. Did you called setConfig? Skipping Error.");
-            return;
-        }
-
-        final String errorUrl = mConfig.hasValidUrl() ? mConfig.getUrl() : mConfig.getSyncUrl();
-
-        if (mHasConnectivity && errorUrl != null && !errorUrl.isEmpty()) {
-            try {
-                mExecutor.execute(new Runnable() {
-                    @Override
-                    public void run() {
-                        postError(error, errorUrl);
-                    }
-                });
-            } catch (RejectedExecutionException ex) {
-                logger.error("Error when Posting Error: {}", ex.getMessage());
-            }
+            logger.warn("Offline: Could not dispatch error report: {}", e.getMessage());
         }
     }
 }

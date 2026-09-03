@@ -1,39 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Standard Permissions -->
+    <!-- Standard Networking & Lifecycle Permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.QUICKBOOT_POWERON" />
     
     <!-- Location Permissions -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_LOCATION_EXTRA_COMMANDS" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     
-    <!-- Activity Recognition (API 29+) -->
+    <!-- Activity Recognition (API 29+) & Play Services Legacy -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-permission android:name="com.google.android.gms.permission.ACTIVITY_RECOGNITION" />
     
-    <!-- Foreground Service Permissions (Android 14+ API 34) -->
+    <!-- Foreground Service Permissions (Android 14+ API 34 through Android 16+) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     
-    <!-- Notifications Permission (Android 13+ API 33) -->
+    <!-- Notification Post Permission (Android 13+ API 33) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Feature Hardware Declarations -->
+    <!-- Optional Hardware Features (Prevents Play Store Sideload & Device Filtering) -->
     <uses-feature android:name="android.hardware.location" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.stepdetector" android:required="false" />
 
     <application>
+        <!-- Offline Location SQLite Content Provider -->
         <provider
             android:name="com.marianhello.bgloc.data.provider.LocationContentProvider"
             android:authorities="@string/mauron85_bgloc_content_authority"
             android:exported="false" />
             
+        <!-- Core Foreground Location Tracking Service -->
         <service 
             android:name="com.marianhello.bgloc.service.LocationServiceImpl" 
             android:enabled="true" 
@@ -41,37 +45,37 @@
             android:foregroundServiceType="location" 
             android:stopWithTask="false" />
             
+        <!-- React Native Headless Background Execution Service -->
         <service 
             android:name="com.marianhello.bgloc.react.headless.HeadlessService" 
             android:enabled="true"
-            android:exported="false" 
-            android:foregroundServiceType="location" />
+            android:exported="false" />
         
+        <!-- Unified System Event & Boot Restoration Receiver -->
         <receiver 
             android:name="com.marianhello.bgloc.BootCompletedReceiver"
             android:enabled="true" 
-            android:exported="true">
-            <intent-filter>
+            android:exported="true"
+            android:directBootAware="false">
+            <intent-filter android:priority="999">
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.huawei.intent.action.POWER_ON" />
+                <action android:name="com.miui.action.FORCE_START" />
+                <action android:name="android.intent.action.REBOOT" />
             </intent-filter>
         </receiver>
 
-        <receiver
-            android:name="com.marianhello.bgloc.UpgradeReceiver"
-            android:enabled="true"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-            </intent-filter>
-        </receiver>
-
+        <!-- Sentry Mode Low-Power Geofencing Wakeup Receiver -->
         <receiver
             android:name="com.wrdhrd.bgloc.HybridGeofenceReceiver"
             android:enabled="false"
             android:exported="true" />
 
+        <!-- Sentry Mode Activity Recognition Transition Receiver -->
         <receiver
             android:name="com.wrdhrd.bgloc.HybridActivityReceiver"
             android:enabled="false"
